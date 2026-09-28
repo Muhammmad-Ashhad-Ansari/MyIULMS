@@ -28,6 +28,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var transcript by mutableStateOf<Transcript?>(null)
         private set
 
+    var studentName by mutableStateOf<String?>(null)
+        private set
     var savedUser: String? = null
         private set
     var savedPassword: String? = null
@@ -60,9 +62,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun doLogin(user: String, pass: String, remember: Boolean) {
-        val ok = withContext(Dispatchers.IO) { client.login(user, pass) }
+        val loginResult = withContext(Dispatchers.IO) {
+            val ok = client.login(user, pass)
+
+            if (!ok) {
+                Pair(false, null)
+            } else {
+                val homeHtml = client.getHtml("/")
+                Pair(true, parseStudentName(homeHtml))
+            }
+        }
+
+        val ok = loginResult.first
+        val name = loginResult.second
 
         if (ok) {
+            studentName = name
+
             if (remember) {
                 store.save(user, pass)
                 savedUser = user
@@ -72,6 +88,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 savedUser = null
                 savedPassword = null
             }
+
             loggedIn = true
         } else {
             errorMsg = "Sign in failed. Check your registration number and password."
@@ -90,6 +107,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         examResult = null
         vouchers = null
         transcript = null
+        studentName = null
         errorMsg = null
         loggedIn = false
     }

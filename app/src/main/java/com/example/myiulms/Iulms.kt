@@ -174,7 +174,19 @@ class IulmsClient {
 }
 
 // ---------------- Parsers ----------------
+fun parseStudentName(html: String): String? {
+    val doc = org.jsoup.Jsoup.parse(html)
+    val loginInfo = doc.selectFirst(".logininfo") ?: return null
 
+    return loginInfo
+        .select("a")
+        .firstOrNull {
+            !it.attr("href").contains("logout.php", ignoreCase = true)
+        }
+        ?.text()
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+}
 fun parseExamResult(html: String): ExamResult {
     val doc = Jsoup.parse(html)
     val title = doc.select("h1").firstOrNull { it.text().startsWith("EXAM RESULT") }?.text()
@@ -284,6 +296,7 @@ class SecureStore(private val context: Context) {
             null
         }
     }
+
 
     fun clear() {
         try {

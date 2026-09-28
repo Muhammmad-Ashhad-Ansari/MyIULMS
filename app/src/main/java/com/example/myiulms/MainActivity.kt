@@ -108,18 +108,6 @@ private fun LoginScreen(
             .background(MaterialTheme.colorScheme.background)
             .systemBarsPadding()
     ) {
-        IconButton(
-            onClick = onThemeToggle,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(12.dp)
-        ) {
-            Icon(
-                if (darkTheme) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
-                contentDescription = "Switch theme"
-            )
-        }
-
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 24.dp, vertical = 28.dp),
@@ -305,6 +293,33 @@ private fun LoginScreen(
                 )
             }
         }
+
+        // Keep the theme button above the full-screen LazyColumn so it remains clickable.
+        Surface(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(16.dp),
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 3.dp,
+            shadowElevation = 2.dp
+        ) {
+            IconButton(onClick = onThemeToggle) {
+                Icon(
+                    imageVector = if (darkTheme) {
+                        Icons.Rounded.LightMode
+                    } else {
+                        Icons.Rounded.DarkMode
+                    },
+                    contentDescription = if (darkTheme) {
+                        "Switch to light theme"
+                    } else {
+                        "Switch to dark theme"
+                    },
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
     }
 }
 
@@ -330,7 +345,8 @@ private fun HomeScreen(
                 darkTheme = darkTheme,
                 onThemeToggle = onThemeToggle,
                 onRefresh = { vm.refresh(tab) },
-                onLogout = vm::logout
+                onLogout = vm::logout,
+                studentName = vm.studentName,
             )
         },
         bottomBar = {
@@ -387,6 +403,7 @@ private fun RowScope.NavItem(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PortalTopBar(
+    studentName: String?,
     darkTheme: Boolean,
     onThemeToggle: () -> Unit,
     onRefresh: () -> Unit,
@@ -411,9 +428,15 @@ private fun PortalTopBar(
                 }
                 Spacer(Modifier.width(10.dp))
                 Column {
-                    Text("IULMS", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Student portal",
+                        text = studentName?.let { formatStudentName(it) } ?: "IULMS",
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    Text(
+                        "IULMS Student Portal",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1033,4 +1056,16 @@ private fun nearestDueText(vouchers: List<Voucher>): String {
         info.any { it.label == "Due today" } -> "Payment due today"
         else -> "${vouchers.size} payment item${if (vouchers.size == 1) "" else "s"}"
     }
+}
+
+private fun formatStudentName(name: String): String {
+    return name
+        .trim()
+        .lowercase()
+        .split(Regex("\\s+"))
+        .joinToString(" ") { part ->
+            part.replaceFirstChar { char ->
+                if (char.isLowerCase()) char.titlecase() else char.toString()
+            }
+        }
 }
