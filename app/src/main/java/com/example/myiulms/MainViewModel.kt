@@ -25,6 +25,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var vouchers by mutableStateOf<List<Voucher>?>(null)
         private set
+    var downloadingVoucherNumber by mutableStateOf<String?>(null)
+        private set
     var transcript by mutableStateOf<Transcript?>(null)
         private set
 
@@ -106,6 +108,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         client.logout()
         examResult = null
         vouchers = null
+        downloadingVoucherNumber = null
         transcript = null
         studentName = null
         errorMsg = null
@@ -121,6 +124,55 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun loadVouchers() = launchTask {
         vouchers = withContext(Dispatchers.IO) {
             parseVouchers(client.getHtml("/sic/Vouchers.php"))
+        }
+    }
+
+    fun openVoucher(
+        context: android.content.Context,
+        voucher: Voucher
+    ) {
+        if (downloadingVoucherNumber != null) return
+
+        viewModelScope.launch {
+            downloadingVoucherNumber = voucher.number
+            errorMsg = null
+
+            try {
+                val document = withContext(Dispatchers.IO) {
+                    client.getVoucherDocument(voucher)
+                }
+
+                if (document.isPdf()) {
+                    val uri = saveVoucherAsPdf(context, voucher, document)
+                    if (!openVoucherPdf(context, uri)) {
+                        errorMsg = "Voucher saved, but no PDF viewer is installed."
+                    }
+                } else {
+                    val html = document.asHtml()
+                    if (!html.contains("<html", ignoreCase = true) &&
+                        !html.contains("<!doctype", ignoreCase = true)
+                    ) {
+                        throw IllegalStateException("IULMS returned an unsupported voucher format")
+                    }
+
+                    val intent = android.content.Intent(
+                        context,
+                        VoucherPrintActivity::class.java
+                    ).apply {
+                        putExtra(VoucherPrintActivity.EXTRA_HTML, html)
+                        putExtra(VoucherPrintActivity.EXTRA_VOUCHER_NUMBER, voucher.number)
+                    }
+
+                    context.startActivity(intent)
+                }
+            } catch (e: NotLoggedInException) {
+                errorMsg = "Session expired. Please sign in again."
+                loggedIn = false
+            } catch (e: Exception) {
+                errorMsg = "Voucher could not be opened: ${e.message ?: "Unknown error"}"
+            } finally {
+                downloadingVoucherNumber = null
+            }
         }
     }
 

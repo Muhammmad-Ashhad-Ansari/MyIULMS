@@ -42,7 +42,9 @@ data class Voucher(
     val semester: String,
     val dueDate: String,
     val description: String,
-    val amount: String
+    val amount: String,
+    val printVoucherNumber: String = "",
+    val studentId: String = ""
 )
 
 data class Course(
@@ -171,6 +173,55 @@ class IulmsClient {
         }
         throw NotLoggedInException()
     }
+
+    fun getVoucherDocument(voucher: Voucher): VoucherDocument {
+        if (voucher.printVoucherNumber.isBlank() || voucher.studentId.isBlank()) {
+            throw IllegalStateException("Voucher print information is unavailable")
+        }
+
+        repeat(2) {
+            val form = FormBody.Builder()
+                .add("VoucherNumber", voucher.printVoucherNumber)
+                .add("studentId", voucher.studentId)
+                .add("voucherBtn", "Print Voucher")
+                .build()
+
+            val req = Request.Builder()
+                .url("$BASE/sic/PrintVoucher.php")
+                .post(form)
+                .header("Accept", "application/pdf,text/html,application/xhtml+xml,*/*;q=0.8")
+                .header("Referer", "$BASE/sic/Vouchers.php")
+                .build()
+
+            val response = http.newCall(req).execute()
+            val contentType = response.body?.contentType()?.toString().orEmpty()
+            val bytes = response.use { it.body?.bytes() ?: ByteArray(0) }
+
+            if (bytes.isEmpty()) {
+                throw IllegalStateException("IULMS returned an empty voucher")
+            }
+
+            val looksLikeHtml = contentType.contains("text/html", ignoreCase = true) ||
+                bytes.take(256).toByteArray().toString(Charsets.UTF_8)
+                    .contains("<html", ignoreCase = true)
+
+            if (looksLikeHtml) {
+                val html = bytes.toString(Charsets.UTF_8)
+                val looksLoggedOut =
+                    html.contains("name=\"username\"", ignoreCase = true) &&
+                        html.contains("name=\"password\"", ignoreCase = true)
+
+                if (looksLoggedOut) {
+                    relogin()
+                    return@repeat
+                }
+            }
+
+            return VoucherDocument(bytes = bytes, contentType = contentType)
+        }
+
+        throw NotLoggedInException()
+    }
 }
 
 // ---------------- Parsers ----------------
@@ -224,21 +275,34 @@ fun parseVouchers(html: String): List<Voucher> {
     val doc = Jsoup.parse(html)
     val table = doc.getElementById("voucherTable") ?: return emptyList()
     val list = mutableListOf<Voucher>()
+
     for (tr in table.select("tr")) {
         val td = tr.select("td")
+
         // Data rows ka pehla cell 1. 2. 3. jaisa hota hai, header ka khali
         if (td.size >= 7 && td[0].text().endsWith(".")) {
+            val printForm = tr.selectFirst("form[action*=PrintVoucher]")
+
             list.add(
                 Voucher(
                     number = td[1].text(),
                     semester = td[2].text(),
                     dueDate = td[3].text(),
                     description = td[5].text(),
-                    amount = td[6].text()
+                    amount = td[6].text(),
+                    printVoucherNumber = printForm
+                        ?.selectFirst("input[name=VoucherNumber]")
+                        ?.attr("value")
+                        .orEmpty(),
+                    studentId = printForm
+                        ?.selectFirst("input[name=studentId]")
+                        ?.attr("value")
+                        .orEmpty()
                 )
             )
         }
     }
+
     return list
 }
 

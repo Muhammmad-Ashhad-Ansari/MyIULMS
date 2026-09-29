@@ -7,11 +7,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
 private val LightColors = lightColorScheme(
-    primary = IqraBlue,
+    primary = MyIULMSBlue,
     onPrimary = Color.White,
-    primaryContainer = IqraBlueSoft,
-    onPrimaryContainer = IqraNavy,
-    secondary = IqraNavy,
+    primaryContainer = MyIULMSBlueSoft,
+    onPrimaryContainer = MyIULMSNavy,
+    secondary = MyIULMSNavy,
     onSecondary = Color.White,
     background = LightBackground,
     onBackground = LightText,
@@ -28,7 +28,7 @@ private val LightColors = lightColorScheme(
 private val DarkColors = darkColorScheme(
     primary = Color(0xFF82CFFF),
     onPrimary = Color(0xFF00344F),
-    primaryContainer = IqraBlueSoftDark,
+    primaryContainer = MyIULMSBlueSoftDark,
     onPrimaryContainer = Color(0xFFB9E4FF),
     secondary = Color(0xFFAAC7FF),
     onSecondary = Color(0xFF0A2F5D),

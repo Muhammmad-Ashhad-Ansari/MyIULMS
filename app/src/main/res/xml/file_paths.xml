@@ -3,4 +3,7 @@
     <cache-path
         name="shared_academic_images"
         path="shares/" />
+    <external-files-path
+        name="downloaded_vouchers"
+        path="Download/MyIULMS/" />
 </paths>

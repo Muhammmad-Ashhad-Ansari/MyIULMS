@@ -25,7 +25,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -47,11 +51,6 @@ import java.time.temporal.ChronoUnit
 import java.util.Locale
 import kotlin.math.roundToInt
 
-private val GradeStrong = Color(0xFF2E7D32)
-private val GradeAverage = Color(0xFFF9A825)
-private val GradeWeak = Color(0xFFEF6C00)
-private val GradeCritical = Color(0xFFC62828)
-private val GradeNeutral = Color(0xFF757575)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -160,7 +159,7 @@ private fun LoginScreen(
 
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(24.dp),
+                    shape = RoundedCornerShape(AppRadius.Hero),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                 ) {
@@ -172,7 +171,7 @@ private fun LoginScreen(
                             label = { Text("Registration number") },
                             leadingIcon = { Icon(Icons.Rounded.Badge, null) },
                             singleLine = true,
-                            shape = RoundedCornerShape(16.dp),
+                            shape = RoundedCornerShape(AppRadius.Medium),
                             keyboardOptions = KeyboardOptions(
                                 keyboardType = KeyboardType.Number,
                                 imeAction = ImeAction.Next
@@ -197,7 +196,7 @@ private fun LoginScreen(
                                 }
                             },
                             singleLine = true,
-                            shape = RoundedCornerShape(16.dp),
+                            shape = RoundedCornerShape(AppRadius.Medium),
                             keyboardOptions = KeyboardOptions(
                                 keyboardType = KeyboardType.Password,
                                 imeAction = ImeAction.Done
@@ -240,8 +239,11 @@ private fun LoginScreen(
                         vm.errorMsg?.let { message ->
                             Spacer(Modifier.height(8.dp))
                             Surface(
+                                modifier = Modifier.semantics {
+                                    liveRegion = LiveRegionMode.Assertive
+                                },
                                 color = MaterialTheme.colorScheme.errorContainer,
-                                shape = RoundedCornerShape(14.dp)
+                                shape = RoundedCornerShape(AppRadius.Medium)
                             ) {
                                 Row(
                                     Modifier.padding(12.dp),
@@ -265,7 +267,7 @@ private fun LoginScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .heightIn(min = 52.dp),
-                            shape = RoundedCornerShape(16.dp)
+                            shape = RoundedCornerShape(AppRadius.Medium)
                         ) {
                             if (vm.loading) {
                                 CircularProgressIndicator(
@@ -309,7 +311,7 @@ private fun LoginScreen(
                     modifier = Modifier.fillMaxWidth(),
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .78f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
@@ -317,7 +319,7 @@ private fun LoginScreen(
                     modifier = Modifier.fillMaxWidth(),
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .7f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -358,6 +360,8 @@ private fun HomeScreen(
         }
     }
 
+    val context = LocalContext.current
+
     Scaffold(
         topBar = {
             PortalTopBar(
@@ -387,7 +391,13 @@ private fun HomeScreen(
         ) {
             when (tab) {
                 0 -> ResultScreen(vm.examResult, vm.studentName)
-                1 -> VoucherScreen(vm.vouchers)
+                1 -> VoucherScreen(
+                    vouchers = vm.vouchers,
+                    downloadingVoucherNumber = vm.downloadingVoucherNumber,
+                    onDownload = { voucher ->
+                        vm.openVoucher(context, voucher)
+                    }
+                )
                 else -> TranscriptScreen(vm.transcript, vm.studentName)
             }
 
@@ -399,7 +409,12 @@ private fun HomeScreen(
                 )
             }
 
-            vm.errorMsg?.let { ErrorBanner(it) }
+            vm.errorMsg?.let {
+                ErrorBanner(
+                    message = it,
+                    onRetry = { vm.refresh(tab) }
+                )
+            }
         }
     }
 }
@@ -428,18 +443,20 @@ private fun PortalTopBar(
     onRefresh: () -> Unit,
     onLogout: () -> Unit
 ) {
+    var menuExpanded by remember { mutableStateOf(false) }
+
     TopAppBar(
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Image(
                     painter = painterResource(R.drawable.myiulms_app_icon),
-                    contentDescription = "MyIULMS",
+                    contentDescription = null,
                     modifier = Modifier
                         .size(40.dp)
-                        .clip(RoundedCornerShape(10.dp)),
+                        .clip(RoundedCornerShape(AppRadius.Small)),
                     contentScale = ContentScale.Fit
                 )
-                Spacer(Modifier.width(10.dp))
+                Spacer(Modifier.width(AppSpacing.Md))
                 Column {
                     Text(
                         text = studentName?.let { formatStudentName(it) } ?: "MyIULMS",
@@ -459,14 +476,39 @@ private fun PortalTopBar(
             IconButton(onClick = onThemeToggle) {
                 Icon(
                     if (darkTheme) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
-                    contentDescription = "Switch theme"
+                    contentDescription = if (darkTheme) {
+                        "Switch to light theme"
+                    } else {
+                        "Switch to dark theme"
+                    }
                 )
             }
-            IconButton(onClick = onRefresh) {
-                Icon(Icons.Rounded.Refresh, "Refresh")
-            }
-            IconButton(onClick = onLogout) {
-                Icon(Icons.AutoMirrored.Rounded.ExitToApp, "Logout")
+
+            Box {
+                IconButton(onClick = { menuExpanded = true }) {
+                    Icon(Icons.Rounded.MoreVert, "More options")
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Refresh") },
+                        leadingIcon = { Icon(Icons.Rounded.Refresh, null) },
+                        onClick = {
+                            menuExpanded = false
+                            onRefresh()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Log out") },
+                        leadingIcon = { Icon(Icons.AutoMirrored.Rounded.ExitToApp, null) },
+                        onClick = {
+                            menuExpanded = false
+                            onLogout()
+                        }
+                    )
+                }
             }
         },
         colors = TopAppBarDefaults.topAppBarColors(
@@ -552,7 +594,7 @@ private fun ResultScreen(result: ExamResult?, studentName: String?) {
 private fun ResultCourseCard(row: ExamRow) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(21.dp),
+        shape = RoundedCornerShape(AppRadius.Large),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(Modifier.padding(17.dp)) {
@@ -560,9 +602,7 @@ private fun ResultCourseCard(row: ExamRow) {
                 Text(
                     row.course,
                     modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
+                    style = MaterialTheme.typography.titleMedium
                 )
                 Spacer(Modifier.width(10.dp))
                 GradeBadge(row.grade)
@@ -570,15 +610,7 @@ private fun ResultCourseCard(row: ExamRow) {
 
             Spacer(Modifier.height(15.dp))
 
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(7.dp)
-            ) {
-                MetricTile("Mid", row.midterm, Modifier.weight(1f))
-                MetricTile("Quiz", row.quizzes, Modifier.weight(1f))
-                MetricTile("Project", row.project, Modifier.weight(1f))
-                MetricTile("Final", row.finalExam, Modifier.weight(1f))
-            }
+            ResultMetricGrid(row)
 
             HorizontalDivider(
                 Modifier.padding(vertical = 13.dp),
@@ -598,7 +630,11 @@ private fun ResultCourseCard(row: ExamRow) {
 }
 
 @Composable
-private fun VoucherScreen(vouchers: List<Voucher>?) {
+private fun VoucherScreen(
+    vouchers: List<Voucher>?,
+    downloadingVoucherNumber: String?,
+    onDownload: (Voucher) -> Unit
+) {
     if (vouchers == null) {
         LoadingPlaceholder("Loading vouchers…")
         return
@@ -639,18 +675,30 @@ private fun VoucherScreen(vouchers: List<Voucher>?) {
                 )
             }
         } else {
-            items(vouchers) { VoucherCard(it) }
+            items(vouchers) { voucher ->
+                VoucherCard(
+                    voucher = voucher,
+                    downloading = downloadingVoucherNumber == voucher.number,
+                    downloadBusy = downloadingVoucherNumber != null,
+                    onDownload = { onDownload(voucher) }
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun VoucherCard(voucher: Voucher) {
+private fun VoucherCard(
+    voucher: Voucher,
+    downloading: Boolean,
+    downloadBusy: Boolean,
+    onDownload: () -> Unit
+) {
     val status = dueStatus(voucher.dueDate)
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(21.dp),
+        shape = RoundedCornerShape(AppRadius.Large),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(Modifier.padding(17.dp)) {
@@ -682,27 +730,38 @@ private fun VoucherCard(voucher: Voucher) {
             InfoLine(Icons.Rounded.ConfirmationNumber, "Voucher no.", voucher.number)
 
             Spacer(Modifier.height(14.dp))
-            OutlinedButton(
-                onClick = { },
-                enabled = false,
+            Button(
+                onClick = onDownload,
+                enabled = !downloadBusy &&
+                    voucher.printVoucherNumber.isNotBlank() &&
+                    voucher.studentId.isNotBlank(),
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 48.dp),
-                shape = RoundedCornerShape(14.dp)
+                shape = RoundedCornerShape(AppRadius.Medium)
             ) {
-                Icon(Icons.Rounded.Download, null)
-                Spacer(Modifier.width(8.dp))
-                Text("Download voucher")
+                if (downloading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Spacer(Modifier.width(AppSpacing.Sm))
+                    Text("Opening voucher…")
+                } else {
+                    Icon(Icons.Rounded.Download, contentDescription = null)
+                    Spacer(Modifier.width(AppSpacing.Sm))
+                    Text(
+                        if (voucher.printVoucherNumber.isNotBlank() &&
+                            voucher.studentId.isNotBlank()
+                        ) {
+                            "Open voucher"
+                        } else {
+                            "Voucher unavailable"
+                        }
+                    )
+                }
             }
-            Text(
-                "Download will activate after the LMS voucher file/link is mapped.",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp),
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
     }
 }
@@ -834,7 +893,7 @@ private fun CreditProgressCard(completed: Int, remaining: Int) {
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(AppRadius.Large),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(Modifier.padding(18.dp)) {
@@ -890,7 +949,7 @@ private fun TranscriptCourseCard(course: Course) {
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(19.dp),
+        shape = RoundedCornerShape(AppRadius.Large),
         colors = CardDefaults.cardColors(
             containerColor = gradeColor.copy(alpha = .09f)
         )
@@ -912,9 +971,7 @@ private fun TranscriptCourseCard(course: Course) {
                     Column(Modifier.weight(1f)) {
                         Text(
                             course.title,
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis
+                            style = MaterialTheme.typography.titleMedium
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
@@ -963,7 +1020,7 @@ private fun HeroMetricCard(
 ) {
     Card(
         Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(AppRadius.Hero),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
     ) {
         Row(
@@ -976,7 +1033,7 @@ private fun HeroMetricCard(
                 Text(
                     label,
                     style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .78f)
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
                 Spacer(Modifier.height(5.dp))
                 Text(
@@ -988,7 +1045,7 @@ private fun HeroMetricCard(
                 Text(
                     helper,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .72f)
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
             }
 
@@ -1007,33 +1064,25 @@ private fun HeroMetricCard(
 
 @Composable
 private fun InsightRow(vararg values: Triple<String, String, ImageVector>) {
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        values.forEach { (label, value, icon) ->
-            Surface(
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(17.dp),
-                color = MaterialTheme.colorScheme.surface
-            ) {
-                Column(
-                    Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Icon(
-                        icon,
-                        null,
-                        modifier = Modifier.size(18.dp),
-                        tint = MaterialTheme.colorScheme.primary
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (maxWidth < 380.dp) {
+            Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.Sm)) {
+                values.forEach { item ->
+                    InsightTile(
+                        item = item,
+                        modifier = Modifier.fillMaxWidth()
                     )
-                    Spacer(Modifier.height(7.dp))
-                    Text(value, style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        label,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center
+                }
+            }
+        } else {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.Sm)
+            ) {
+                values.forEach { item ->
+                    InsightTile(
+                        item = item,
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }
@@ -1041,27 +1090,67 @@ private fun InsightRow(vararg values: Triple<String, String, ImageVector>) {
     }
 }
 
+@Composable
+private fun InsightTile(
+    item: Triple<String, String, ImageVector>,
+    modifier: Modifier = Modifier
+) {
+    val (label, value, icon) = item
+
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(AppRadius.Medium),
+        color = MaterialTheme.colorScheme.surface
+    ) {
+        Row(
+            modifier = Modifier.padding(AppSpacing.Md),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.width(AppSpacing.Md))
+            Column {
+                Text(value, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun gradeColor(grade: String): Color {
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val g = grade.trim().uppercase()
+
     return when {
-        g == "A" || g == "A-" -> GradeStrong
-        g.startsWith("B") -> GradeAverage
-        g.startsWith("C") -> GradeWeak
-        g == "D" || g == "F" -> GradeCritical
-        else -> GradeNeutral
+        g == "A" || g == "A-" -> if (dark) GradeStrongDark else GradeStrongLight
+        g.startsWith("B") -> if (dark) GradeAverageDark else GradeAverageLight
+        g.startsWith("C") -> if (dark) GradeWeakDark else GradeWeakLight
+        g == "D" || g == "F" -> if (dark) GradeCriticalDark else GradeCriticalLight
+        else -> if (dark) GradeNeutralDark else GradeNeutralLight
     }
 }
 
 @Composable
 private fun GradeBadge(grade: String) {
     val color = gradeColor(grade)
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+
     Surface(
-        color = color.copy(alpha = .14f),
-        shape = RoundedCornerShape(12.dp)
+        color = color.copy(alpha = if (dark) .18f else .12f),
+        shape = RoundedCornerShape(AppRadius.Small)
     ) {
         Text(
             grade.ifBlank { "—" },
-            Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
+            Modifier.padding(horizontal = AppSpacing.Md, vertical = AppSpacing.Sm),
             style = MaterialTheme.typography.labelLarge,
             color = color,
             fontWeight = FontWeight.Bold
@@ -1071,21 +1160,22 @@ private fun GradeBadge(grade: String) {
 
 @Composable
 private fun DueBadge(status: DueInfo) {
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val bg = when (status.kind) {
         DueKind.OVERDUE -> MaterialTheme.colorScheme.errorContainer
-        DueKind.SOON -> WarningSoft
+        DueKind.SOON -> if (dark) WarningContainerDark else WarningContainerLight
         DueKind.NORMAL -> MaterialTheme.colorScheme.primaryContainer
     }
     val fg = when (status.kind) {
         DueKind.OVERDUE -> MaterialTheme.colorScheme.onErrorContainer
-        DueKind.SOON -> Warning
+        DueKind.SOON -> if (dark) WarningForegroundDark else WarningForegroundLight
         DueKind.NORMAL -> MaterialTheme.colorScheme.onPrimaryContainer
     }
 
-    Surface(color = bg, shape = RoundedCornerShape(12.dp)) {
+    Surface(color = bg, shape = RoundedCornerShape(AppRadius.Small)) {
         Text(
             status.label,
-            Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            Modifier.padding(horizontal = AppSpacing.Md, vertical = AppSpacing.Sm),
             style = MaterialTheme.typography.labelMedium,
             color = fg
         )
@@ -1116,10 +1206,44 @@ private fun ScreenHeading(
 }
 
 @Composable
+private fun ResultMetricGrid(row: ExamRow) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (maxWidth < 380.dp) {
+            Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.Sm)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(AppSpacing.Sm)
+                ) {
+                    MetricTile("Mid", row.midterm, Modifier.weight(1f))
+                    MetricTile("Quiz", row.quizzes, Modifier.weight(1f))
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(AppSpacing.Sm)
+                ) {
+                    MetricTile("Project", row.project, Modifier.weight(1f))
+                    MetricTile("Final", row.finalExam, Modifier.weight(1f))
+                }
+            }
+        } else {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.Sm)
+            ) {
+                MetricTile("Mid", row.midterm, Modifier.weight(1f))
+                MetricTile("Quiz", row.quizzes, Modifier.weight(1f))
+                MetricTile("Project", row.project, Modifier.weight(1f))
+                MetricTile("Final", row.finalExam, Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
 private fun MetricTile(label: String, value: String, modifier: Modifier = Modifier) {
     Surface(
         modifier,
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(AppRadius.Medium),
         color = MaterialTheme.colorScheme.surfaceVariant
     ) {
         Column(
@@ -1174,7 +1298,7 @@ private fun InfoLine(icon: ImageVector, label: String, value: String) {
 private fun EmptyState(icon: ImageVector, title: String, body: String) {
     Card(
         Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(21.dp),
+        shape = RoundedCornerShape(AppRadius.Large),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(
@@ -1209,21 +1333,37 @@ private fun LoadingPlaceholder(text: String) {
 }
 
 @Composable
-private fun BoxScope.ErrorBanner(message: String) {
+private fun BoxScope.ErrorBanner(
+    message: String,
+    onRetry: (() -> Unit)? = null
+) {
     Surface(
         modifier = Modifier
             .align(Alignment.TopCenter)
-            .padding(16.dp),
+            .padding(AppSpacing.Lg)
+            .semantics {
+                liveRegion = LiveRegionMode.Assertive
+            },
         color = MaterialTheme.colorScheme.errorContainer,
-        shape = RoundedCornerShape(14.dp)
+        shape = RoundedCornerShape(AppRadius.Medium)
     ) {
         Row(
-            Modifier.padding(12.dp),
+            modifier = Modifier.padding(AppSpacing.Md),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Rounded.ErrorOutline, null)
-            Spacer(Modifier.width(8.dp))
-            Text(message, style = MaterialTheme.typography.bodyMedium)
+            Icon(Icons.Rounded.ErrorOutline, contentDescription = null)
+            Spacer(Modifier.width(AppSpacing.Sm))
+            Text(
+                text = message,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium
+            )
+            if (onRetry != null) {
+                Spacer(Modifier.width(AppSpacing.Sm))
+                TextButton(onClick = onRetry) {
+                    Text("Retry")
+                }
+            }
         }
     }
 }
@@ -1279,3 +1419,4 @@ private fun formatStudentName(name: String): String =
                 if (it.isLowerCase()) it.titlecase() else it.toString()
             }
         }
+
