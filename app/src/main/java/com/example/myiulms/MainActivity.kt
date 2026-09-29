@@ -3,6 +3,7 @@ package com.example.myiulms
 import android.content.Context
 import android.content.res.Configuration
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -23,8 +24,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -42,7 +45,13 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.Locale
-import androidx.compose.ui.graphics.Color
+import kotlin.math.roundToInt
+
+private val GradeStrong = Color(0xFF2E7D32)
+private val GradeAverage = Color(0xFFF9A825)
+private val GradeWeak = Color(0xFFEF6C00)
+private val GradeCritical = Color(0xFFC62828)
+private val GradeNeutral = Color(0xFF757575)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -51,24 +60,30 @@ class MainActivity : ComponentActivity() {
 
         val uiPrefs = getSharedPreferences("iulms_ui", Context.MODE_PRIVATE)
         val systemDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-                Configuration.UI_MODE_NIGHT_YES
+            Configuration.UI_MODE_NIGHT_YES
 
         setContent {
             var darkTheme by remember {
                 mutableStateOf(
                     if (uiPrefs.contains("dark_theme")) {
                         uiPrefs.getBoolean("dark_theme", systemDark)
-                    } else systemDark
+                    } else {
+                        systemDark
+                    }
                 )
             }
 
             MyIULMSTheme(darkTheme = darkTheme) {
-                Surface(Modifier.fillMaxSize()) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
                     App(
                         darkTheme = darkTheme,
                         onThemeToggle = {
-                            darkTheme = !darkTheme
-                            uiPrefs.edit().putBoolean("dark_theme", darkTheme).apply()
+                            val next = !darkTheme
+                            darkTheme = next
+                            uiPrefs.edit().putBoolean("dark_theme", next).apply()
                         }
                     )
                 }
@@ -110,24 +125,29 @@ private fun LoginScreen(
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 28.dp),
+            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 32.dp),
             verticalArrangement = Arrangement.Center
         ) {
             item {
-                Image(
-                    painter = painterResource(R.drawable.iqra_university_logo),
-                    contentDescription = "Iqra University",
-                    modifier = Modifier
-                        .fillMaxWidth(.78f)
-                        .heightIn(max = 78.dp),
-                    contentScale = ContentScale.Fit
+                Text(
+                    text = "MyIULMS",
+                    style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Unofficial student client for IULMS",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                Spacer(Modifier.height(30.dp))
+                Spacer(Modifier.height(28.dp))
 
                 Text(
                     "Welcome back",
-                    style = MaterialTheme.typography.displaySmall
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.SemiBold
                 )
                 Spacer(Modifier.height(7.dp))
                 Text(
@@ -136,11 +156,11 @@ private fun LoginScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(24.dp))
 
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(26.dp),
+                    shape = RoundedCornerShape(24.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                 ) {
@@ -244,7 +264,7 @@ private fun LoginScreen(
                             enabled = !vm.loading && user.isNotBlank() && pass.isNotBlank(),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(54.dp),
+                                .heightIn(min = 52.dp),
                             shape = RoundedCornerShape(16.dp)
                         ) {
                             if (vm.loading) {
@@ -283,18 +303,25 @@ private fun LoginScreen(
                     )
                 }
 
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Independent student project • Not affiliated with or endorsed by Iqra University",
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .78f)
+                )
+                Spacer(Modifier.height(8.dp))
                 Text(
                     "by Not_Einstein",
                     modifier = Modifier.fillMaxWidth(),
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .72f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .7f)
                 )
             }
         }
 
-        // Keep the theme button above the full-screen LazyColumn so it remains clickable.
         Surface(
             modifier = Modifier
                 .align(Alignment.TopEnd)
@@ -306,16 +333,8 @@ private fun LoginScreen(
         ) {
             IconButton(onClick = onThemeToggle) {
                 Icon(
-                    imageVector = if (darkTheme) {
-                        Icons.Rounded.LightMode
-                    } else {
-                        Icons.Rounded.DarkMode
-                    },
-                    contentDescription = if (darkTheme) {
-                        "Switch to light theme"
-                    } else {
-                        "Switch to dark theme"
-                    },
+                    imageVector = if (darkTheme) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
+                    contentDescription = if (darkTheme) "Switch to light theme" else "Switch to dark theme",
                     tint = MaterialTheme.colorScheme.primary
                 )
             }
@@ -346,7 +365,7 @@ private fun HomeScreen(
                 onThemeToggle = onThemeToggle,
                 onRefresh = { vm.refresh(tab) },
                 onLogout = vm::logout,
-                studentName = vm.studentName,
+                studentName = vm.studentName
             )
         },
         bottomBar = {
@@ -367,9 +386,9 @@ private fun HomeScreen(
                 .padding(padding)
         ) {
             when (tab) {
-                0 -> ResultScreen(vm.examResult)
+                0 -> ResultScreen(vm.examResult, vm.studentName)
                 1 -> VoucherScreen(vm.vouchers)
-                else -> TranscriptScreen(vm.transcript)
+                else -> TranscriptScreen(vm.transcript, vm.studentName)
             }
 
             if (vm.loading) {
@@ -412,31 +431,24 @@ private fun PortalTopBar(
     TopAppBar(
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    shape = RoundedCornerShape(11.dp),
-                    color = Color.White,
-                    border = CardDefaults.outlinedCardBorder()
-                ) {
-                    Image(
-                        painter = painterResource(R.drawable.iu_mark),
-                        contentDescription = "IU",
-                        modifier = Modifier
-                            .size(38.dp)
-                            .padding(5.dp),
-                        contentScale = ContentScale.Fit
-                    )
-                }
+                Image(
+                    painter = painterResource(R.drawable.myiulms_app_icon),
+                    contentDescription = "MyIULMS",
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(10.dp)),
+                    contentScale = ContentScale.Fit
+                )
                 Spacer(Modifier.width(10.dp))
                 Column {
                     Text(
-                        text = studentName?.let { formatStudentName(it) } ?: "IULMS",
+                        text = studentName?.let { formatStudentName(it) } ?: "MyIULMS",
                         style = MaterialTheme.typography.titleMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-
                     Text(
-                        "IULMS Student Portal",
+                        "MyIULMS • Unofficial",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -464,12 +476,13 @@ private fun PortalTopBar(
 }
 
 @Composable
-private fun ResultScreen(result: ExamResult?) {
+private fun ResultScreen(result: ExamResult?, studentName: String?) {
     if (result == null) {
         LoadingPlaceholder("Loading latest result…")
         return
     }
 
+    val context = LocalContext.current
     val totals = result.rows.mapNotNull { it.total.toDoubleOrNull() }
     val average = if (totals.isNotEmpty()) totals.average() else null
     val highest = totals.maxOrNull()
@@ -482,11 +495,23 @@ private fun ResultScreen(result: ExamResult?) {
     ) {
         item {
             ScreenHeading(
-                "Academic result",
-                result.title
+                title = "Academic result",
+                subtitle = result.title
                     .replace("EXAM RESULT", "", ignoreCase = true)
                     .trim(' ', '(', ')', '-')
-                    .ifBlank { "Latest examination" }
+                    .ifBlank { "Latest examination" },
+                action = {
+                    IconButton(
+                        onClick = {
+                            runCatching { shareResultAsPng(context, studentName, result) }
+                                .onFailure {
+                                    Toast.makeText(context, "Could not share result.", Toast.LENGTH_SHORT).show()
+                                }
+                        }
+                    ) {
+                        Icon(Icons.Rounded.Share, "Share result")
+                    }
+                }
             )
         }
 
@@ -520,8 +545,6 @@ private fun ResultScreen(result: ExamResult?) {
         } else {
             items(result.rows) { ResultCourseCard(it) }
         }
-
-        item { Spacer(Modifier.height(4.dp)) }
     }
 }
 
@@ -623,7 +646,7 @@ private fun VoucherScreen(vouchers: List<Voucher>?) {
 
 @Composable
 private fun VoucherCard(voucher: Voucher) {
-    val dueStatus = dueStatus(voucher.dueDate)
+    val status = dueStatus(voucher.dueDate)
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -642,7 +665,7 @@ private fun VoucherCard(voucher: Voucher) {
                     )
                 }
                 Spacer(Modifier.width(8.dp))
-                DueBadge(dueStatus)
+                DueBadge(status)
             }
 
             Spacer(Modifier.height(14.dp))
@@ -660,9 +683,11 @@ private fun VoucherCard(voucher: Voucher) {
 
             Spacer(Modifier.height(14.dp))
             OutlinedButton(
-                onClick = { /* Enabled in the next patch once the LMS voucher URL is captured. */ },
+                onClick = { },
                 enabled = false,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp),
                 shape = RoundedCornerShape(14.dp)
             ) {
                 Icon(Icons.Rounded.Download, null)
@@ -683,14 +708,27 @@ private fun VoucherCard(voucher: Voucher) {
 }
 
 @Composable
-private fun TranscriptScreen(transcript: Transcript?) {
+private fun TranscriptScreen(transcript: Transcript?, studentName: String?) {
     if (transcript == null) {
         LoadingPlaceholder("Loading transcript…")
         return
     }
 
-    val credits = transcript.courses.sumOf { it.hours.toDoubleOrNull() ?: 0.0 }
+    val context = LocalContext.current
+    val completed = remember(transcript) { completedHours(transcript.courses) }
+    val remaining = remember(transcript) { remainingHours(transcript.courses) }
     val aGrades = transcript.courses.count { it.grade.trim().uppercase().startsWith("A") }
+    var weakOnly by remember(transcript) { mutableStateOf(false) }
+
+    // IMPORTANT: Display the raw transcript rows exactly as returned by IULMS.
+    // Do not deduplicate here; theory/lab rows can share similar course codes.
+    val visibleCourses = remember(transcript, weakOnly) {
+        if (weakOnly) {
+            transcript.courses.filter { isWeakCourse(it.grade) }
+        } else {
+            transcript.courses
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -698,65 +736,219 @@ private fun TranscriptScreen(transcript: Transcript?) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            ScreenHeading("Transcript", "Complete academic record")
+            ScreenHeading(
+                "Transcript",
+                "Academic record and degree progress",
+                action = {
+                    IconButton(
+                        onClick = {
+                            runCatching { shareTranscriptAsPng(context, studentName, transcript) }
+                                .onFailure {
+                                    Toast.makeText(context, "Could not share transcript.", Toast.LENGTH_SHORT).show()
+                                }
+                        }
+                    ) {
+                        Icon(Icons.Rounded.Share, "Share transcript")
+                    }
+                }
+            )
         }
 
         item {
             HeroMetricCard(
                 "Cumulative GPA",
                 transcript.cgpa.ifBlank { "—" },
-                "${transcript.courses.size} completed courses",
+                "${transcript.courses.size} transcript entries",
                 Icons.Rounded.School
             )
         }
 
         item {
+            CreditProgressCard(completed = completed, remaining = remaining)
+        }
+
+        item {
             InsightRow(
-                Triple("Credits", trimZero(credits), Icons.Rounded.MenuBook),
-                Triple("Courses", transcript.courses.size.toString(), Icons.Rounded.LibraryBooks),
+                Triple("Credits", completed.toString(), Icons.Rounded.MenuBook),
+                Triple("Entries", transcript.courses.size.toString(), Icons.Rounded.LibraryBooks),
                 Triple("A grades", aGrades.toString(), Icons.Rounded.Grade)
             )
         }
 
-        items(transcript.courses) { TranscriptCourseCard(it) }
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Courses & labs", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        if (weakOnly) "${visibleCourses.size} weak/critical entries"
+                        else "All transcript entries returned by IULMS",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                FilterChip(
+                    selected = weakOnly,
+                    onClick = { weakOnly = !weakOnly },
+                    label = { Text("Weak only") },
+                    leadingIcon = if (weakOnly) {
+                        { Icon(Icons.Rounded.FilterAlt, null, Modifier.size(18.dp)) }
+                    } else null
+                )
+            }
+        }
+
+        if (visibleCourses.isEmpty()) {
+            item {
+                EmptyState(
+                    Icons.Rounded.CheckCircle,
+                    if (weakOnly) "No weak courses" else "No transcript entries",
+                    if (weakOnly) "No C-grade or lower entries were found."
+                    else "Transcript entries will appear here when returned by IULMS."
+                )
+            }
+        } else {
+            items(visibleCourses) { TranscriptCourseCard(it) }
+        }
+
+        item {
+            Text(
+                "MyIULMS is an unofficial student-made client and is not affiliated with or endorsed by Iqra University.",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp, bottom = 8.dp),
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun CreditProgressCard(completed: Int, remaining: Int) {
+    val progress = (completed.toFloat() / DEGREE_TOTAL_CREDIT_HOURS).coerceIn(0f, 1f)
+    val percent = (progress * 100).roundToInt()
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.padding(18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Rounded.Timeline,
+                    null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Degree progress", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "$completed / $DEGREE_TOTAL_CREDIT_HOURS credit hours",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Text(
+                    "$percent%",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(Modifier.height(14.dp))
+
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .clip(CircleShape)
+            )
+
+            Spacer(Modifier.height(9.dp))
+
+            Text(
+                if (remaining > 0) "$remaining credit hours remaining"
+                else "Degree credit-hour target reached",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
 @Composable
 private fun TranscriptCourseCard(course: Course) {
+    val gradeColor = gradeColor(course.grade)
+    val meaning = gradeMeaning(course.grade)
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(19.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        colors = CardDefaults.cardColors(
+            containerColor = gradeColor.copy(alpha = .09f)
+        )
     ) {
-        Column(Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.Top) {
-                Column(Modifier.weight(1f)) {
+        Row(modifier = Modifier.height(IntrinsicSize.Min)) {
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(gradeColor)
+            )
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(16.dp)
+            ) {
+                Row(verticalAlignment = Alignment.Top) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            course.title,
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "${course.code} • ${course.hours} credit hours",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    GradeBadge(course.grade)
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Text(
+                            "Grade points",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        Text(course.gpa.ifBlank { "—" }, style = MaterialTheme.typography.titleMedium)
+                    }
+
                     Text(
-                        course.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "${course.code} • ${course.hours} credit hours",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        meaning,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = gradeColor,
+                        fontWeight = FontWeight.Bold
                     )
                 }
-                Spacer(Modifier.width(10.dp))
-                GradeBadge(course.grade)
-            }
-
-            Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(
-                    "Grade points",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                Text(course.gpa, style = MaterialTheme.typography.titleMedium)
             }
         }
     }
@@ -799,6 +991,7 @@ private fun HeroMetricCard(
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .72f)
                 )
             }
+
             Box(
                 Modifier
                     .size(52.dp)
@@ -829,7 +1022,8 @@ private fun InsightRow(vararg values: Triple<String, String, ImageVector>) {
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Icon(
-                        icon, null,
+                        icon,
+                        null,
                         modifier = Modifier.size(18.dp),
                         tint = MaterialTheme.colorScheme.primary
                     )
@@ -847,22 +1041,30 @@ private fun InsightRow(vararg values: Triple<String, String, ImageVector>) {
     }
 }
 
+private fun gradeColor(grade: String): Color {
+    val g = grade.trim().uppercase()
+    return when {
+        g == "A" || g == "A-" -> GradeStrong
+        g.startsWith("B") -> GradeAverage
+        g.startsWith("C") -> GradeWeak
+        g == "D" || g == "F" -> GradeCritical
+        else -> GradeNeutral
+    }
+}
+
 @Composable
 private fun GradeBadge(grade: String) {
-    val g = grade.trim().uppercase()
-    val (bg, fg) = when {
-        g.startsWith("A") -> SuccessSoft to Success
-        g.startsWith("B") -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
-        g.startsWith("C") -> WarningSoft to Warning
-        else -> MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
-    }
-
-    Surface(color = bg, shape = RoundedCornerShape(12.dp)) {
+    val color = gradeColor(grade)
+    Surface(
+        color = color.copy(alpha = .14f),
+        shape = RoundedCornerShape(12.dp)
+    ) {
         Text(
             grade.ifBlank { "—" },
             Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
             style = MaterialTheme.typography.labelLarge,
-            color = fg
+            color = color,
+            fontWeight = FontWeight.Bold
         )
     }
 }
@@ -891,15 +1093,25 @@ private fun DueBadge(status: DueInfo) {
 }
 
 @Composable
-private fun ScreenHeading(title: String, subtitle: String) {
-    Column {
-        Text(title, style = MaterialTheme.typography.headlineSmall)
-        Spacer(Modifier.height(3.dp))
-        Text(
-            subtitle,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+private fun ScreenHeading(
+    title: String,
+    subtitle: String,
+    action: (@Composable () -> Unit)? = null
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.headlineSmall)
+            Spacer(Modifier.height(3.dp))
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        action?.invoke()
     }
 }
 
@@ -941,7 +1153,8 @@ private fun SummaryValue(label: String, value: String) {
 private fun InfoLine(icon: ImageVector, label: String, value: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(
-            icon, null,
+            icon,
+            null,
             modifier = Modifier.size(18.dp),
             tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -1022,17 +1235,15 @@ private fun formatMoney(value: Double): String =
     NumberFormat.getNumberInstance(Locale.US).apply { maximumFractionDigits = 0 }.format(value)
 
 private fun formatOneDecimal(value: Double): String =
-    if (value % 1.0 == 0.0) value.toInt().toString() else String.format(Locale.US, "%.1f", value)
-
-private fun trimZero(value: Double): String =
-    if (value % 1.0 == 0.0) value.toInt().toString() else String.format(Locale.US, "%.1f", value)
+    if (value % 1.0 == 0.0) value.toInt().toString()
+    else String.format(Locale.US, "%.1f", value)
 
 private enum class DueKind { OVERDUE, SOON, NORMAL }
 private data class DueInfo(val label: String, val kind: DueKind)
 
 private fun dueStatus(raw: String): DueInfo {
     return try {
-        val clean = raw.replace(Regex("(?<=\\\\d)(st|nd|rd|th)"), "")
+        val clean = raw.replace(Regex("(?<=\\d)(st|nd|rd|th)"), "")
         val date = LocalDate.parse(
             clean,
             DateTimeFormatter.ofPattern("EEEE, d MMMM, yyyy", Locale.ENGLISH)
@@ -1058,14 +1269,13 @@ private fun nearestDueText(vouchers: List<Voucher>): String {
     }
 }
 
-private fun formatStudentName(name: String): String {
-    return name
-        .trim()
+private fun formatStudentName(name: String): String =
+    name.trim()
         .lowercase()
         .split(Regex("\\s+"))
+        .filter { it.isNotBlank() }
         .joinToString(" ") { part ->
-            part.replaceFirstChar { char ->
-                if (char.isLowerCase()) char.titlecase() else char.toString()
+            part.replaceFirstChar {
+                if (it.isLowerCase()) it.titlecase() else it.toString()
             }
         }
-}
