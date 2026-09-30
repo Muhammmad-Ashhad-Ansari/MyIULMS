@@ -355,8 +355,9 @@ private fun HomeScreen(
     LaunchedEffect(tab) {
         when (tab) {
             0 -> if (vm.examResult == null) vm.loadExamResult()
-            1 -> if (vm.vouchers == null) vm.loadVouchers()
-            2 -> if (vm.transcript == null) vm.loadTranscript()
+            1 -> if (vm.examSchedule == null) vm.loadExamSchedule()
+            2 -> if (vm.vouchers == null) vm.loadVouchers()
+            3 -> if (vm.transcript == null) vm.loadTranscript()
         }
     }
 
@@ -378,8 +379,9 @@ private fun HomeScreen(
                 tonalElevation = 1.dp
             ) {
                 NavItem(tab == 0, { tab = 0 }, Icons.Rounded.Assessment, "Result")
-                NavItem(tab == 1, { tab = 1 }, Icons.Rounded.ReceiptLong, "Vouchers")
-                NavItem(tab == 2, { tab = 2 }, Icons.Rounded.School, "Transcript")
+                NavItem(tab == 1, { tab = 1 }, Icons.Rounded.Event, "Schedules")
+                NavItem(tab == 2, { tab = 2 }, Icons.Rounded.ReceiptLong, "Vouchers")
+                NavItem(tab == 3, { tab = 3 }, Icons.Rounded.School, "Transcript")
             }
         },
         containerColor = MaterialTheme.colorScheme.background
@@ -391,7 +393,8 @@ private fun HomeScreen(
         ) {
             when (tab) {
                 0 -> ResultScreen(vm.examResult, vm.studentName)
-                1 -> VoucherScreen(
+                1 -> SchedulesScreen(vm.examSchedule)
+                2 -> VoucherScreen(
                     vouchers = vm.vouchers,
                     downloadingVoucherNumber = vm.downloadingVoucherNumber,
                     onDownload = { voucher ->
@@ -624,6 +627,293 @@ private fun ResultCourseCard(row: ExamRow) {
                 SummaryValue("Total", row.total)
                 SummaryValue("Grade", row.grade)
                 SummaryValue("Points", row.points)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SchedulesScreen(examSchedule: ExamSchedule?) {
+    var selectedSubTab by remember { mutableIntStateOf(0) }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        SingleChoiceSegmentedButtonRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 8.dp)
+        ) {
+            SegmentedButton(
+                selected = selectedSubTab == 0,
+                onClick = { selectedSubTab = 0 },
+                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+            ) {
+                Text("Exam Schedule")
+            }
+            SegmentedButton(
+                selected = selectedSubTab == 1,
+                onClick = { selectedSubTab = 1 },
+                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+            ) {
+                Text("Semester Schedule")
+            }
+        }
+
+        Box(modifier = Modifier.weight(1f)) {
+            if (selectedSubTab == 0) {
+                ExamScheduleContent(examSchedule)
+            } else {
+                SemesterScheduleComingSoonContent()
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExamScheduleContent(schedule: ExamSchedule?) {
+    if (schedule == null) {
+        LoadingPlaceholder("Loading exam schedule…")
+        return
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(13.dp)
+    ) {
+        item {
+            ScreenHeading(
+                title = "Exam schedule",
+                subtitle = schedule.title.ifBlank { "Examination schedule" }
+            )
+        }
+
+        if (!schedule.notice.isNullOrBlank()) {
+            item {
+                NoticeCard(message = schedule.notice)
+            }
+        }
+
+        item {
+            HeroMetricCard(
+                label = "Scheduled exams",
+                value = "${schedule.entries.size}",
+                helper = if (schedule.entries.isEmpty()) "No scheduled exams"
+                else "${schedule.entries.size} course examination${if (schedule.entries.size == 1) "" else "s"}",
+                icon = Icons.Rounded.Event
+            )
+        }
+
+        if (schedule.entries.isEmpty()) {
+            item {
+                EmptyState(
+                    icon = Icons.Rounded.EventAvailable,
+                    title = "No exam schedule",
+                    body = "Your examination schedule is not available at this time or no exams are scheduled."
+                )
+            }
+        } else {
+            items(schedule.entries) { entry ->
+                ExamScheduleCard(entry = entry)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SemesterScheduleComingSoonContent() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(AppRadius.Hero),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Surface(
+                    modifier = Modifier.size(64.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Rounded.HourglassTop,
+                            contentDescription = null,
+                            modifier = Modifier.size(32.dp),
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                Text(
+                    text = "Semester Schedule",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(Modifier.height(6.dp))
+
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    shape = RoundedCornerShape(AppRadius.Small)
+                ) {
+                    Text(
+                        text = "Coming Soon",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                Text(
+                    text = "Semester class schedule integration will be available in a future update.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NoticeCard(message: String) {
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val bg = if (dark) WarningContainerDark else WarningContainerLight
+    val fg = if (dark) WarningForegroundDark else WarningForegroundLight
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = bg,
+        shape = RoundedCornerShape(AppRadius.Medium)
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Icon(
+                Icons.Rounded.WarningAmber,
+                contentDescription = null,
+                tint = fg,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = fg
+            )
+        }
+    }
+}
+
+@Composable
+private fun ExamScheduleCard(entry: ExamScheduleEntry) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(AppRadius.Large),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.padding(17.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Text(
+                    text = entry.courseTitle,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                if (entry.edpCode.isNotBlank()) {
+                    Spacer(Modifier.width(8.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = RoundedCornerShape(AppRadius.Small)
+                    ) {
+                        Text(
+                            text = "EDP: ${entry.edpCode}",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(AppRadius.Medium),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Rounded.CalendarToday,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = entry.dayAndDate,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    if (entry.time.isNotBlank()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Rounded.Schedule,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = entry.time,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            if (entry.location.isNotBlank()) {
+                InfoLine(Icons.Rounded.MeetingRoom, "Location / Room", entry.location)
+                Spacer(Modifier.height(8.dp))
+            }
+
+            if (entry.faculty.isNotBlank()) {
+                InfoLine(Icons.Rounded.Person, "Faculty", entry.faculty)
             }
         }
     }

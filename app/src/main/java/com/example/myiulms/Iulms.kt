@@ -37,6 +37,21 @@ data class ExamRow(
 
 data class ExamResult(val title: String, val rows: List<ExamRow>, val gpa: String?)
 
+data class ExamScheduleEntry(
+    val dayAndDate: String,
+    val time: String,
+    val courseTitle: String,
+    val faculty: String,
+    val location: String,
+    val edpCode: String
+)
+
+data class ExamSchedule(
+    val title: String,
+    val notice: String?,
+    val entries: List<ExamScheduleEntry>
+)
+
 data class Voucher(
     val number: String,
     val semester: String,
@@ -269,6 +284,70 @@ fun parseExamResult(html: String): ExamResult {
         }
     }
     return ExamResult(title, rows, gpa)
+}
+
+fun parseExamSchedule(html: String): ExamSchedule {
+    val doc = Jsoup.parse(html)
+    val title = doc.select(".label-head-text").text().replace("\\s+".toRegex(), " ").trim()
+        .ifBlank { "Exam Schedule" }
+
+    val notice = doc.select("p").firstOrNull { p ->
+        p.parents().none { it.hasClass("label-head") } &&
+            (p.text().contains("subject to change", ignoreCase = true) ||
+                p.text().contains("advised to review", ignoreCase = true))
+    }?.text()?.replace("\\s+".toRegex(), " ")?.trim()
+
+    val entries = mutableListOf<ExamScheduleEntry>()
+    val dateCells = doc.select("td.dateStyle")
+    val detailCells = doc.select("td.detailsStyle")
+
+    val count = minOf(dateCells.size, detailCells.size)
+    for (i in 0 until count) {
+        val dateTd = dateCells[i]
+        val detailTd = detailCells[i]
+
+        val daySpan = dateTd.selectFirst(".dayStyle")
+        val dayAndDate = daySpan?.let {
+            val htmlWithSeparator = it.html().replace("(?i)<br\\s*/?>".toRegex(), ", ")
+            Jsoup.parse(htmlWithSeparator).text()
+        }?.replace("\\s+".toRegex(), " ")?.trim().orEmpty()
+
+        val time = dateTd.select("tr").getOrNull(1)?.text()?.replace("\\s+".toRegex(), " ")?.trim().orEmpty()
+
+        var courseTitle = ""
+        var faculty = ""
+        var location = ""
+        var edpCode = ""
+
+        for (tr in detailTd.select("tr")) {
+            val fullText = tr.text().replace("\\s+".toRegex(), " ").trim()
+            when {
+                fullText.contains("Course Title", ignoreCase = true) ->
+                    courseTitle = fullText.substringAfter(":").trim()
+                fullText.contains("Faculty", ignoreCase = true) ->
+                    faculty = fullText.substringAfter(":").trim()
+                fullText.contains("Location", ignoreCase = true) ->
+                    location = fullText.substringAfter(":").trim()
+                fullText.contains("EDP Code", ignoreCase = true) ->
+                    edpCode = fullText.substringAfter(":").trim()
+            }
+        }
+
+        if (courseTitle.isNotBlank() || dayAndDate.isNotBlank()) {
+            entries.add(
+                ExamScheduleEntry(
+                    dayAndDate = dayAndDate,
+                    time = time,
+                    courseTitle = courseTitle,
+                    faculty = faculty,
+                    location = location,
+                    edpCode = edpCode
+                )
+            )
+        }
+    }
+
+    return ExamSchedule(title = title, notice = notice, entries = entries)
 }
 
 fun parseVouchers(html: String): List<Voucher> {

@@ -23,6 +23,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     var examResult by mutableStateOf<ExamResult?>(null)
         private set
+    var examSchedule by mutableStateOf<ExamSchedule?>(null)
+        private set
     var vouchers by mutableStateOf<List<Voucher>?>(null)
         private set
     var downloadingVoucherNumber by mutableStateOf<String?>(null)
@@ -107,6 +109,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun logout() {
         client.logout()
         examResult = null
+        examSchedule = null
         vouchers = null
         downloadingVoucherNumber = null
         transcript = null
@@ -118,6 +121,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun loadExamResult() = launchTask {
         examResult = withContext(Dispatchers.IO) {
             parseExamResult(client.getHtml("/sic/examresult.php"))
+        }
+    }
+
+    fun loadExamSchedule() = launchTask {
+        examSchedule = withContext(Dispatchers.IO) {
+            parseExamSchedule(client.getHtml("/sic/examschedule.php"))
         }
     }
 
@@ -188,7 +197,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun refresh(tab: Int) {
         when (tab) {
             0 -> loadExamResult()
-            1 -> loadVouchers()
+            1 -> loadExamSchedule()
+            2 -> loadVouchers()
             else -> loadTranscript()
         }
     }
