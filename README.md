@@ -1,180 +1,138 @@
 # MyIULMS
 
 <p align="center">
-  <strong>A modern, unofficial Android client for Iqra University IULMS.</strong>
+  <strong>A cleaner mobile experience for Iqra University students.</strong>
 </p>
 
 <p align="center">
-  Kotlin • Jetpack Compose • Material 3 • OkHttp • Jsoup
+  An unofficial Android client for the IULMS student portal
 </p>
 
 <p align="center">
-  <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/latest">
-    <img alt="Latest Release" src="https://img.shields.io/github/v/release/Muhammmad-Ashhad-Ansari/MyIULMS?display_name=tag&style=for-the-badge">
-  </a>
-  <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/blob/main/LICENSE">
-    <img alt="MIT License" src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge">
-  </a>
-  <img alt="Android 8+" src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=for-the-badge&logo=android&logoColor=white">
-  <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-Compose-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white">
+  Kotlin · Jetpack Compose · Material 3 · OkHttp · Jsoup
 </p>
 
 <p align="center">
-  <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/latest"><strong>Download latest APK</strong></a>
+  <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/latest"><strong>Latest release</strong></a>
   ·
   <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/issues">Report an issue</a>
+  ·
+  <a href="LICENSE">MIT License</a>
 </p>
 
 ---
 
-## Overview
+## About
 
-**MyIULMS** is a native Android client built around the existing Iqra University Learning Management System at **iulms.edu.pk**.
+**MyIULMS** is an independent Android app that presents selected student services from [Iqra University's IULMS portal](https://iulms.edu.pk) in a mobile-first interface. Sign in with an existing IULMS account to view academic records and fee information.
 
-It signs in through the student's existing IULMS account, keeps the authenticated session, fetches academic information from the portal, parses the returned HTML/JSON, and presents it through a cleaner mobile-first interface.
+The app connects directly to IULMS. It does not use a MyIULMS backend.
 
-> [!IMPORTANT]
-> MyIULMS is an **independent student project**. It is not an official Iqra University application and is not affiliated with, maintained by, sponsored by, or endorsed by Iqra University.
-
-## Current Release
-
-**v0.2.1**
-
-The current release includes:
-
-- Logged-in student name in the app header
-- Working light/dark theme toggle on both login and authenticated screens
-- Persistent theme preference
-- Encrypted Remember Me support
-- Exam results, fee vouchers, and transcript views
-- Academic summary metrics and fee due-state calculations
-
-> The APK currently published in GitHub Releases is a **debug build intended for testing**. A properly signed production release is planned for a later milestone.
+> **Unofficial project:** MyIULMS is not affiliated with, maintained by, sponsored by, or endorsed by Iqra University.
 
 ## Features
 
-| Area | What MyIULMS currently provides |
-|---|---|
-| **Authentication** | Login with existing IULMS credentials, encrypted Remember Me, automatic session recovery |
-| **Student identity** | Displays the authenticated student's name after login |
-| **Exam results** | Marks breakdown, total, grade, grade points, semester GPA |
-| **Result insights** | Average marks, highest score, A-grade count where supported |
-| **Fee vouchers** | Voucher number, semester, due date, description, amount |
-| **Fee insights** | Total outstanding amount and derived due/overdue status |
-| **Transcript** | CGPA, courses, credit hours, grades, grade points |
-| **Transcript insights** | Completed credits, course count, A-grade count |
-| **UI** | Jetpack Compose + Material 3, Iqra-inspired palette, light/dark themes |
-| **Reliability** | Cookie-based session handling, automatic re-login and retry |
+- **Sign in and session recovery** using an existing IULMS account
+- **Exam results** with course marks, totals, grades, grade points, and semester GPA when provided
+- **Exam schedules** with dates, times, course details, faculty, and location when available
+- **Fee vouchers** with amounts, due dates, and due/overdue indicators; open a voucher to save or print it as a PDF
+- **Transcript** with CGPA, courses, credit hours, grades, and GPA values
+- **Academic insights** including credit-hour progress and weak-course filtering
+- **Shareable academic summaries** for results and transcripts
+- **Light and dark themes** with a saved theme preference
 
-## How It Works
+The semester class timetable and attendance are not currently implemented.
 
-MyIULMS currently uses **no custom backend**. The app communicates directly with the existing IULMS website.
+## How it works
 
 ```text
-Student
-   │
-   ▼
-MyIULMS Android App
-   │
-   ├── Login + session cookies
-   ├── OkHttp requests
-   ├── Jsoup HTML parsing
-   └── JSON transcript parsing
-   │
-   ▼
-iulms.edu.pk
+┌───────────────────────┐
+│ Compose screens       │
+│ Login, results, etc.  │
+└───────────┬───────────┘
+            ↕
+┌───────────────────────┐
+│ MainViewModel         │
+│ UI state and actions  │
+└───────────┬───────────┘
+            ↕
+┌───────────────────────┐
+│ IulmsClient           │
+│ HTTP, cookies, parsing│
+└───────────┬───────────┘
+            ↕
+┌───────────────────────┐
+│ iulms.edu.pk          │
+└───────────────────────┘
 ```
 
-Typical flow:
+The app signs in to the existing portal, keeps session cookies in memory, fetches authenticated pages with OkHttp, and parses HTML with Jsoup or transcript JSON with `org.json`. The resulting Kotlin data is held by the `MainViewModel` and displayed with Jetpack Compose. When a session expires, the client attempts to sign in again and retry the request.
 
-1. Start an IULMS web session.
-2. Submit the student's registration number and password through the existing login flow.
-3. Maintain authenticated cookies in memory.
-4. Fetch the required IULMS pages using OkHttp.
-5. Parse HTML using Jsoup and transcript JSON using `org.json`.
-6. Convert the returned data into Kotlin models.
-7. Render the information with Jetpack Compose.
-8. Re-authenticate and retry automatically when the IULMS session expires.
+Since the app relies on IULMS page structures and endpoints, changes to the university portal may require updates to its network or parsing code.
 
-Because MyIULMS depends on the current behavior and structure of the university portal, changes to **iulms.edu.pk** may require parser updates.
+## Privacy and credentials
 
-## Security & Privacy
+- Credentials are entered by the user and are not hard-coded in the app source.
+- If **Remember me** is selected, login details are stored locally using AndroidX `EncryptedSharedPreferences` backed by Android Keystore encryption.
+- Session cookies are kept in the running app's HTTP client.
+- Academic requests go directly to IULMS; the project has no separate application backend.
 
-MyIULMS is designed to avoid unnecessary handling of student credentials:
+This is an independent student project. Review the source and use your own judgment before entering account credentials.
 
-- Credentials are **not hard-coded** into the repository.
-- Remembered login details are stored locally using **EncryptedSharedPreferences**.
-- Android Keystore-backed encryption is used by the secure preference layer.
-- Session cookies are held at runtime by the app's HTTP client.
-- The app communicates directly with IULMS instead of sending credentials through a separate third-party backend.
-- Common secret files, signing files, local SDK configuration, and build output are excluded through `.gitignore`.
-
-> [!CAUTION]
-> This is still an experimental student project. Review the source before using it with your own university account.
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Language | Kotlin |
-| UI | Jetpack Compose |
-| Design system | Material 3 |
-| State | Android ViewModel + Compose state |
-| Networking | OkHttp 4.12 |
-| HTML parsing | Jsoup 1.17 |
-| Async work | Kotlin Coroutines |
-| Local credential storage | EncryptedSharedPreferences |
-| JSON parsing | `org.json` |
-| Minimum Android version | Android 8.0 / API 26 |
-| Target SDK | Android API 37 |
-
-## Project Structure
+## Project structure
 
 ```text
 MyIULMS/
 ├── app/
 │   ├── src/main/
 │   │   ├── java/com/example/myiulms/
-│   │   │   ├── Iulms.kt
-│   │   │   ├── MainActivity.kt
-│   │   │   ├── MainViewModel.kt
-│   │   │   └── ui/theme/
-│   │   ├── res/
+│   │   │   ├── Iulms.kt                 # Portal client, models, parsers, secure store
+│   │   │   ├── MainActivity.kt          # Compose UI and navigation
+│   │   │   ├── MainViewModel.kt         # Authentication and screen state
+│   │   │   ├── TranscriptAnalytics.kt   # Transcript and credit-hour calculations
+│   │   │   ├── ShareAcademic.kt         # Shareable result/transcript images
+│   │   │   ├── VoucherDownload.kt       # Voucher PDF saving and rendering
+│   │   │   ├── VoucherPrintActivity.kt  # Voucher preview and print screen
+│   │   │   └── ui/theme/                # Colors, typography, and theme tokens
+│   │   ├── res/                         # Android resources
 │   │   └── AndroidManifest.xml
 │   └── build.gradle.kts
-├── gradle/
+├── gradle/                              # Gradle version catalog and wrapper config
 ├── build.gradle.kts
-├── settings.gradle.kts
-├── LICENSE
-└── README.md
+└── settings.gradle.kts
 ```
 
-### Core Files
+## Technology
 
-- **`Iulms.kt`** — networking, session cookies, data models, parsers, and encrypted credential storage.
-- **`MainViewModel.kt`** — authentication state, student identity, loading/error state, and data-loading operations.
-- **`MainActivity.kt`** — Compose screens, navigation, theme controls, and the main UI.
-- **`ui/theme/`** — Iqra-inspired light/dark color schemes and typography.
+| Area | Technology |
+|---|---|
+| Language | Kotlin |
+| Android UI | Jetpack Compose and Material 3 |
+| State | Android ViewModel and Compose state |
+| Networking | OkHttp 4.12 |
+| HTML parsing | Jsoup 1.17 |
+| JSON parsing | `org.json` |
+| Async work | Kotlin Coroutines |
+| Credential storage | AndroidX Security Crypto |
+| Minimum Android version | Android 8.0 (API 26) |
+| Target SDK | Android API 37 |
 
-## Build & Run
+## Build and run
 
 ### Requirements
 
-- Android Studio
-- Android SDK
-- Internet connection
-- An existing IULMS student account
+- Android Studio and Android SDK
+- Internet access
+- An existing IULMS student account to use the app
 
-### Clone
+Clone the repository and open it in Android Studio:
 
 ```bash
 git clone https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS.git
 cd MyIULMS
 ```
 
-Open the project in Android Studio, allow Gradle to sync, and run it on a physical Android device.
-
-You can also build a debug APK from the project root:
+Build a debug APK from the project root:
 
 ```bash
 ./gradlew assembleDebug
@@ -186,75 +144,30 @@ On Windows PowerShell:
 .\gradlew assembleDebug
 ```
 
-The generated APK is placed under:
+The APK is generated at `app/build/outputs/apk/debug/app-debug.apk`.
 
-```text
-app/build/outputs/apk/debug/
-```
+## Releases
 
-## Download
+See [GitHub Releases](https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases) for available builds. The Gradle project version currently identifies itself as **0.5.0**; release availability and signing details are listed with each published build.
 
-Testing builds are published through **GitHub Releases**:
+## Current scope and limitations
 
-**[https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/latest](https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/latest)**
-
-The latest published build at the time of this README update is **v0.2.1**.
-
-## Current Limitations
-
-- Fee voucher download/printing is not connected yet.
-- Attendance is not implemented yet.
-- Timetable / class schedule is not implemented yet.
-- Semester-wise transcript grouping is not implemented yet.
-- The app depends on the current IULMS HTML/JSON structure.
-- It has not been tested against every degree program, student account type, or historical data variation.
-- The current downloadable APK is debug-signed rather than a production-signed release.
-
-## Roadmap
-
-- [ ] Authenticated fee voucher download / print
-- [ ] Attendance section
-- [ ] Class schedule / timetable
-- [ ] GPA / CGPA calculator and target-GPA simulation
-- [ ] Semester-wise transcript grouping
-- [ ] Academic dashboard and progress insights
-- [ ] Better resilience to IULMS layout changes
-- [ ] Optional local caching
-- [ ] Tablet / large-screen improvements
-- [ ] Properly signed release APK
+- Exam schedules are available; the semester class timetable is not implemented.
+- Attendance is not implemented.
+- IULMS HTML and JSON changes can affect data loading.
+- Portal account types and historical records may vary; not every variation is guaranteed to be supported.
+- Voucher availability and output depend on what IULMS returns for the signed-in account.
 
 ## Contributing
 
-Issues, bug reports, and pull requests are welcome.
+Bug reports and pull requests are welcome. When reporting an issue, include the affected screen and a description of what happened. **Do not include passwords, session cookies, authentication tokens, or other private account information.**
 
-If IULMS changes its page structure and a parser stops working, please include enough non-sensitive detail to reproduce the issue. **Do not post passwords, active session cookies, authentication tokens, or other private account data.**
+## Disclaimer and license
 
-## Disclaimer
+MyIULMS is an unofficial student project and is not affiliated with Iqra University. Iqra University, IULMS, and their related names and marks belong to their respective owners. The app depends on the university's portal and may be affected by changes to that service.
 
-MyIULMS is an independent, unofficial student project.
-
-- It is not developed, published, maintained, sponsored, or endorsed by Iqra University.
-- Iqra University, IULMS, their names, logos, and related marks belong to their respective owners.
-- The application depends on **iulms.edu.pk** and may stop working when the upstream website changes.
-- Users are responsible for protecting their own IULMS credentials and account access.
-
-## License
-
-This project's source code is available under the **MIT License**. See [`LICENSE`](LICENSE).
-
-The MIT License permits use, copying, modification, distribution, sublicensing, and commercial use subject to retaining the copyright and permission notice. It is provided without warranty.
-
-University names, logos, and other third-party marks/assets are **not granted additional rights by this repository's MIT License** and remain the property of their respective owners.
-
-## Author
-
-**Muhammad Ashhad**  
-App signature: **Not_Einstein**
-
-GitHub: [@Muhammmad-Ashhad-Ansari](https://github.com/Muhammmad-Ashhad-Ansari)
+The source code is available under the [MIT License](LICENSE). University names, marks, and other third-party assets are not granted additional rights by that license.
 
 ---
 
-<p align="center">
-  Built as a student-driven Android project to make everyday IULMS access cleaner on mobile.
-</p>
+Made by **Muhammad Ashhad** as an independent project to make everyday IULMS access more convenient on Android.
