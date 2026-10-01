@@ -1,23 +1,28 @@
 # MyIULMS
 
 <p align="center">
-  <strong>A cleaner mobile experience for Iqra University students.</strong>
+  <strong>A modern, unofficial Android client for Iqra University IULMS.</strong>
 </p>
 
 <p align="center">
-  An unofficial Android client for the IULMS student portal
+  Kotlin • Jetpack Compose • Material 3 • OkHttp • Jsoup
 </p>
 
 <p align="center">
-  Kotlin · Jetpack Compose · Material 3 · OkHttp · Jsoup
+  <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/latest">
+    <img alt="Latest Release" src="https://img.shields.io/github/v/release/Muhammmad-Ashhad-Ansari/MyIULMS?display_name=tag&style=for-the-badge">
+  </a>
+  <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/blob/main/LICENSE">
+    <img alt="MIT License" src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge">
+  </a>
+  <img alt="Android 8+" src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=for-the-badge&logo=android&logoColor=white">
+  <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-Compose-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white">
 </p>
 
 <p align="center">
-  <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/latest"><strong>Latest release</strong></a>
+  <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/latest"><strong>Download latest APK</strong></a>
   ·
   <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/issues">Report an issue</a>
-  ·
-  <a href="LICENSE">MIT License</a>
 </p>
 
 ---
@@ -45,26 +50,9 @@ The semester class timetable and attendance are not currently implemented.
 
 ## How it works
 
-```text
-┌───────────────────────┐
-│ Compose screens       │
-│ Login, results, etc.  │
-└───────────┬───────────┘
-            ↕
-┌───────────────────────┐
-│ MainViewModel         │
-│ UI state and actions  │
-└───────────┬───────────┘
-            ↕
-┌───────────────────────┐
-│ IulmsClient           │
-│ HTTP, cookies, parsing│
-└───────────┬───────────┘
-            ↕
-┌───────────────────────┐
-│ iulms.edu.pk          │
-└───────────────────────┘
-```
+<p align="center">
+  <img src="docs/images/iulms-client-architecture.jpg" alt="MyIULMS client architecture: Compose UI, MainViewModel, IulmsClient, and the IULMS portal" width="800">
+</p>
 
 The app signs in to the existing portal, keeps session cookies in memory, fetches authenticated pages with OkHttp, and parses HTML with Jsoup or transcript JSON with `org.json`. The resulting Kotlin data is held by the `MainViewModel` and displayed with Jetpack Compose. When a session expires, the client attempts to sign in again and retry the request.
 
