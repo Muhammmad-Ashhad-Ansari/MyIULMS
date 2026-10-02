@@ -143,7 +143,7 @@ Run the local unit tests with:
 
 ## Releases
 
-See [GitHub Releases](https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases) for published builds. The project is being prepared as **v1.0.0** (version code **7**). A release APK must be signed with the maintainer's private release key before it is distributed; never publish an unsigned APK or commit the signing key to this repository.
+The first stable release, [**MyIULMS v1.0.0**](https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/tag/v1.0.0), is available on GitHub Releases. It includes the signed APK (version code **7**). Future APK updates must use the same signing key so existing installations can update; keep a secure backup of that key and never commit it to this repository.
 
 ## Current scope and limitations
 
