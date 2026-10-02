@@ -143,7 +143,7 @@ Run the local unit tests with:
 
 ## Releases
 
-The first stable release, [**MyIULMS v1.0.0**](https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/tag/v1.0.0), is available on GitHub Releases. It includes the signed APK (version code **7**). Future APK updates must use the same signing key so existing installations can update; keep a secure backup of that key and never commit it to this repository.
+The latest stable release, [**MyIULMS v1.0.1**](https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/tag/v1.0.1), is available on GitHub Releases. Version **1.0.1** (version code **8**) adds an in-app update check. Future APK updates must use the same signing key so existing installations can update; keep a secure backup of that key and never commit it to this repository.
 
 ## Current scope and limitations
 
