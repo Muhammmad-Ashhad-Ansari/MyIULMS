@@ -1,37 +1,52 @@
 package com.example.myiulms
 
-import android.content.Context
 import android.content.res.Configuration
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.content.edit
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ExitToApp
+import androidx.compose.material.icons.automirrored.rounded.FactCheck
+import androidx.compose.material.icons.automirrored.rounded.LibraryBooks
+import androidx.compose.material.icons.automirrored.rounded.Login
+import androidx.compose.material.icons.automirrored.rounded.MenuBook
+import androidx.compose.material.icons.automirrored.rounded.ReceiptLong
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.contentType
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -50,6 +65,7 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 
 
 class MainActivity : ComponentActivity() {
@@ -57,7 +73,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val uiPrefs = getSharedPreferences("iulms_ui", Context.MODE_PRIVATE)
+        val uiPrefs = getSharedPreferences("iulms_ui", MODE_PRIVATE)
         val systemDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
 
@@ -82,7 +98,7 @@ class MainActivity : ComponentActivity() {
                         onThemeToggle = {
                             val next = !darkTheme
                             darkTheme = next
-                            uiPrefs.edit().putBoolean("dark_theme", next).apply()
+                            uiPrefs.edit { putBoolean("dark_theme", next) }
                         }
                     )
                 }
@@ -121,10 +137,11 @@ private fun LoginScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .systemBarsPadding()
+            .imePadding()
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 32.dp),
+            contentPadding = PaddingValues(start = 24.dp, top = 32.dp, end = 24.dp, bottom = 64.dp),
             verticalArrangement = Arrangement.Center
         ) {
             item {
@@ -150,7 +167,7 @@ private fun LoginScreen(
                 )
                 Spacer(Modifier.height(7.dp))
                 Text(
-                    "Access your results, fee vouchers and academic record.",
+                    "Your student portal, made simple.",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -167,7 +184,9 @@ private fun LoginScreen(
                         OutlinedTextField(
                             value = user,
                             onValueChange = { user = it.filter(Char::isDigit) },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .semantics { contentType = ContentType.Username },
                             label = { Text("Registration number") },
                             leadingIcon = { Icon(Icons.Rounded.Badge, null) },
                             singleLine = true,
@@ -183,7 +202,9 @@ private fun LoginScreen(
                         OutlinedTextField(
                             value = pass,
                             onValueChange = { pass = it },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .semantics { contentType = ContentType.Password },
                             label = { Text("Password") },
                             leadingIcon = { Icon(Icons.Rounded.Lock, null) },
                             trailingIcon = {
@@ -276,7 +297,7 @@ private fun LoginScreen(
                                     color = MaterialTheme.colorScheme.onPrimary
                                 )
                             } else {
-                                Icon(Icons.Rounded.Login, null)
+                                Icon(Icons.AutoMirrored.Rounded.Login, null)
                                 Spacer(Modifier.width(8.dp))
                                 Text("Sign in")
                             }
@@ -284,45 +305,28 @@ private fun LoginScreen(
                     }
                 }
 
-                Spacer(Modifier.height(20.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Rounded.Shield,
-                        null,
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        "Credentials are stored encrypted",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(16.dp))
                 Text(
-                    "Independent student project • Not affiliated with or endorsed by Iqra University",
-                    modifier = Modifier.fillMaxWidth(),
+                    "Unofficial student app · Not affiliated with Iqra University",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp),
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "by Not_Einstein",
-                    modifier = Modifier.fillMaxWidth(),
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
         }
+
+        Text(
+            text = "by Not_Einstein",
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = AppSpacing.Md),
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
 
         Surface(
             modifier = Modifier
@@ -351,13 +355,34 @@ private fun HomeScreen(
     onThemeToggle: () -> Unit
 ) {
     var tab by remember { mutableIntStateOf(0) }
+    val useCompactNavLabels = LocalDensity.current.fontScale >= 1.3f
+    val showNavLabels = LocalDensity.current.fontScale < 1.4f
+    val screenState = vm.screenLoadStates[tab] ?: ScreenLoadState()
+    val hasData = when (tab) {
+        0 -> vm.examSchedule != null && vm.weeklySchedule != null
+        1 -> vm.attendance != null
+        2 -> vm.examResult != null
+        3 -> vm.transcript != null
+        else -> vm.vouchers != null
+    }
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(vm.lastUpdatedAt) {
+        if (vm.lastUpdatedAt != null) {
+            snackbarHostState.showSnackbar(
+                message = "Updated just now",
+                duration = SnackbarDuration.Short
+            )
+        }
+    }
 
     LaunchedEffect(tab) {
         when (tab) {
-            0 -> if (vm.examResult == null) vm.loadExamResult()
-            1 -> if (vm.examSchedule == null) vm.loadExamSchedule()
-            2 -> if (vm.vouchers == null) vm.loadVouchers()
+            0 -> if (vm.examSchedule == null || vm.weeklySchedule == null) vm.loadSchedules()
+            1 -> if (vm.attendance == null) vm.loadAttendance()
+            2 -> if (vm.examResult == null) vm.loadExamResult()
             3 -> if (vm.transcript == null) vm.loadTranscript()
+            4 -> if (vm.vouchers == null) vm.loadVouchers()
         }
     }
 
@@ -369,6 +394,7 @@ private fun HomeScreen(
                 darkTheme = darkTheme,
                 onThemeToggle = onThemeToggle,
                 onRefresh = { vm.refresh(tab) },
+                refreshing = screenState.loading,
                 onLogout = vm::logout,
                 studentName = vm.studentName
             )
@@ -378,45 +404,58 @@ private fun HomeScreen(
                 containerColor = MaterialTheme.colorScheme.surface,
                 tonalElevation = 1.dp
             ) {
-                NavItem(tab == 0, { tab = 0 }, Icons.Rounded.Assessment, "Result")
-                NavItem(tab == 1, { tab = 1 }, Icons.Rounded.Event, "Schedules")
-                NavItem(tab == 2, { tab = 2 }, Icons.Rounded.ReceiptLong, "Vouchers")
-                NavItem(tab == 3, { tab = 3 }, Icons.Rounded.School, "Transcript")
+                NavItem(tab == 0, { tab = 0 }, Icons.Rounded.Event, if (useCompactNavLabels) "Sched." else "Schedule", showNavLabels)
+                NavItem(tab == 1, { tab = 1 }, Icons.AutoMirrored.Rounded.FactCheck, if (useCompactNavLabels) "Attend" else "Attend.", showNavLabels)
+                NavItem(tab == 2, { tab = 2 }, Icons.Rounded.Assessment, "Result", showNavLabels)
+                NavItem(tab == 3, { tab = 3 }, Icons.Rounded.School, if (useCompactNavLabels) "Transcr." else "Transcript", showNavLabels)
+                NavItem(tab == 4, { tab = 4 }, Icons.AutoMirrored.Rounded.ReceiptLong, if (useCompactNavLabels) "Voucher" else "Vouchers", showNavLabels)
             }
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            when (tab) {
-                0 -> ResultScreen(vm.examResult, vm.studentName)
-                1 -> SchedulesScreen(vm.examSchedule)
-                2 -> VoucherScreen(
-                    vouchers = vm.vouchers,
-                    downloadingVoucherNumber = vm.downloadingVoucherNumber,
-                    onDownload = { voucher ->
-                        vm.openVoucher(context, voucher)
-                    }
-                )
-                else -> TranscriptScreen(vm.transcript, vm.studentName)
-            }
-
-            if (vm.loading) {
+            if (screenState.loading && hasData) {
                 LinearProgressIndicator(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .align(Alignment.TopCenter)
+                        .semantics { contentDescription = "Refreshing current screen" }
+                )
+            }
+            if (hasData && screenState.error != null) {
+                ErrorBanner(screenState.error, onRetry = { vm.refresh(tab) })
+            }
+            if (tab == 4 && vm.voucherActionError != null) {
+                ErrorBanner(
+                    message = vm.voucherActionError!!,
+                    onRetry = { vm.retryVoucherAction(context) }
                 )
             }
 
-            vm.errorMsg?.let {
-                ErrorBanner(
-                    message = it,
-                    onRetry = { vm.refresh(tab) }
-                )
+            Box(modifier = Modifier.weight(1f)) {
+                when (tab) {
+                    0 -> SchedulesScreen(
+                        vm.examSchedule,
+                        vm.weeklySchedule,
+                        screenState,
+                        onRetry = { vm.refresh(tab) },
+                        snackbarHostState = snackbarHostState
+                    )
+                    1 -> AttendanceScreen(vm.attendance, screenState, onRetry = { vm.refresh(tab) })
+                    2 -> ResultScreen(vm.examResult, vm.studentName, screenState, onRetry = { vm.refresh(tab) })
+                    3 -> TranscriptScreen(vm.transcript, vm.studentName, screenState, onRetry = { vm.refresh(tab) })
+                    else -> VoucherScreen(
+                        vouchers = vm.vouchers,
+                        downloadingVoucherNumber = vm.downloadingVoucherNumber,
+                        screenState = screenState,
+                        onRetry = { vm.refresh(tab) },
+                        onDownload = { voucher -> vm.openVoucher(context, voucher) }
+                    )
+                }
             }
         }
     }
@@ -427,13 +466,25 @@ private fun RowScope.NavItem(
     selected: Boolean,
     onClick: () -> Unit,
     icon: ImageVector,
-    label: String
+    label: String,
+    showLabel: Boolean
 ) {
     NavigationBarItem(
         selected = selected,
         onClick = onClick,
-        icon = { Icon(icon, null) },
-        label = { Text(label) }
+        icon = { Icon(icon, contentDescription = if (showLabel) null else label) },
+        label = if (showLabel) {
+            {
+            Text(
+                text = label,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelMedium
+            )
+            }
+        } else null,
+        alwaysShowLabel = showLabel
     )
 }
 
@@ -444,10 +495,9 @@ private fun PortalTopBar(
     darkTheme: Boolean,
     onThemeToggle: () -> Unit,
     onRefresh: () -> Unit,
+    refreshing: Boolean,
     onLogout: () -> Unit
 ) {
-    var menuExpanded by remember { mutableStateOf(false) }
-
     TopAppBar(
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -476,6 +526,22 @@ private fun PortalTopBar(
             }
         },
         actions = {
+            IconButton(onClick = onRefresh, enabled = !refreshing) {
+                if (refreshing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .size(20.dp)
+                            .semantics {
+                                liveRegion = LiveRegionMode.Polite
+                                contentDescription = "Refreshing current screen"
+                            },
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Icon(Icons.Rounded.Refresh, contentDescription = "Refresh current screen")
+                }
+            }
+
             IconButton(onClick = onThemeToggle) {
                 Icon(
                     if (darkTheme) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
@@ -487,31 +553,8 @@ private fun PortalTopBar(
                 )
             }
 
-            Box {
-                IconButton(onClick = { menuExpanded = true }) {
-                    Icon(Icons.Rounded.MoreVert, "More options")
-                }
-                DropdownMenu(
-                    expanded = menuExpanded,
-                    onDismissRequest = { menuExpanded = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Refresh") },
-                        leadingIcon = { Icon(Icons.Rounded.Refresh, null) },
-                        onClick = {
-                            menuExpanded = false
-                            onRefresh()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Log out") },
-                        leadingIcon = { Icon(Icons.AutoMirrored.Rounded.ExitToApp, null) },
-                        onClick = {
-                            menuExpanded = false
-                            onLogout()
-                        }
-                    )
-                }
+            IconButton(onClick = onLogout) {
+                Icon(Icons.AutoMirrored.Rounded.ExitToApp, contentDescription = "Log out")
             }
         },
         colors = TopAppBarDefaults.topAppBarColors(
@@ -521,9 +564,14 @@ private fun PortalTopBar(
 }
 
 @Composable
-private fun ResultScreen(result: ExamResult?, studentName: String?) {
+private fun ResultScreen(
+    result: ExamResult?,
+    studentName: String?,
+    screenState: ScreenLoadState,
+    onRetry: () -> Unit
+) {
     if (result == null) {
-        LoadingPlaceholder("Loading latest result…")
+        LoadStateContent("Loading latest result…", screenState, onRetry)
         return
     }
 
@@ -535,8 +583,8 @@ private fun ResultScreen(result: ExamResult?, studentName: String?) {
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(13.dp)
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = AppSpacing.Md),
+        verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
     ) {
         item {
             ScreenHeading(
@@ -600,7 +648,7 @@ private fun ResultCourseCard(row: ExamRow) {
         shape = RoundedCornerShape(AppRadius.Large),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
-        Column(Modifier.padding(17.dp)) {
+        Column(Modifier.padding(AppSpacing.Lg)) {
             Row(verticalAlignment = Alignment.Top) {
                 Text(
                     row.course,
@@ -634,7 +682,13 @@ private fun ResultCourseCard(row: ExamRow) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SchedulesScreen(examSchedule: ExamSchedule?) {
+private fun SchedulesScreen(
+    examSchedule: ExamSchedule?,
+    weeklySchedule: WeeklySchedule?,
+    screenState: ScreenLoadState,
+    onRetry: () -> Unit,
+    snackbarHostState: SnackbarHostState
+) {
     var selectedSubTab by remember { mutableIntStateOf(0) }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -648,38 +702,42 @@ private fun SchedulesScreen(examSchedule: ExamSchedule?) {
                 onClick = { selectedSubTab = 0 },
                 shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
             ) {
-                Text("Exam Schedule")
+                Text("Weekly Classes")
             }
             SegmentedButton(
                 selected = selectedSubTab == 1,
                 onClick = { selectedSubTab = 1 },
                 shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
             ) {
-                Text("Semester Schedule")
+                Text("Exam Schedule")
             }
         }
 
         Box(modifier = Modifier.weight(1f)) {
             if (selectedSubTab == 0) {
-                ExamScheduleContent(examSchedule)
+                WeeklyScheduleContent(weeklySchedule, screenState, onRetry, snackbarHostState)
             } else {
-                SemesterScheduleComingSoonContent()
+                ExamScheduleContent(examSchedule, screenState, onRetry)
             }
         }
     }
 }
 
 @Composable
-private fun ExamScheduleContent(schedule: ExamSchedule?) {
+private fun ExamScheduleContent(
+    schedule: ExamSchedule?,
+    screenState: ScreenLoadState,
+    onRetry: () -> Unit
+) {
     if (schedule == null) {
-        LoadingPlaceholder("Loading exam schedule…")
+        LoadStateContent("Loading exam schedule…", screenState, onRetry)
         return
     }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(13.dp)
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = AppSpacing.Md),
+        verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
     ) {
         item {
             ScreenHeading(
@@ -720,72 +778,455 @@ private fun ExamScheduleContent(schedule: ExamSchedule?) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SemesterScheduleComingSoonContent() {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(AppRadius.Hero),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+private fun WeeklyScheduleContent(
+    schedule: WeeklySchedule?,
+    screenState: ScreenLoadState,
+    onRetry: () -> Unit,
+    snackbarHostState: SnackbarHostState
+) {
+    if (schedule == null) {
+        LoadStateContent("Loading weekly schedule…", screenState, onRetry)
+        return
+    }
+
+    val dayOrder = listOf("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
+    val groups = schedule.entries
+        .sortedBy { scheduleStartMinutes(it.time) }
+        .groupBy { it.day.trim().uppercase().take(3).ifBlank { "OTHER" } }
+        .toSortedMap(
+            compareBy(
+                { day -> dayOrder.indexOf(day).let { if (it < 0) dayOrder.size else it } },
+                { day -> day }
+            )
+        )
+
+    val weekDays = listOf("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
+    val classDays = groups.keys
+    var selectedDay by remember(schedule) { mutableStateOf<String?>(null) }
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = AppSpacing.Md),
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+            ScreenHeading(
+                title = "Weekly class schedule",
+                subtitle = schedule.title.ifBlank { "Your semester classes" }
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Surface(
-                    modifier = Modifier.size(64.dp),
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primaryContainer
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            Icons.Rounded.HourglassTop,
-                            contentDescription = null,
-                            modifier = Modifier.size(32.dp),
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
+                weekDays.forEach { day ->
+                    val hasClasses = day in classDays
+                    val isSelected = selectedDay == day
+                    val background = when {
+                        isSelected -> MaterialTheme.colorScheme.primary
+                        hasClasses -> MaterialTheme.colorScheme.primaryContainer
+                        else -> MaterialTheme.colorScheme.surfaceVariant
+                    }
+                    val foreground = when {
+                        isSelected -> MaterialTheme.colorScheme.onPrimary
+                        hasClasses -> MaterialTheme.colorScheme.onPrimaryContainer
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp)
+                            .semantics {
+                                contentDescription = "$day, ${if (hasClasses) "classes scheduled" else "no classes scheduled"}"
+                                stateDescription = if (isSelected) "Selected" else "Not selected"
+                            }
+                            .clickable(role = Role.Button) {
+                                if (hasClasses) {
+                                    selectedDay = day
+                                    val itemIndex = weekDays
+                                        .takeWhile { it != day }
+                                        .filter { it in classDays }
+                                        .sumOf { priorDay -> 1 + groups[priorDay].orEmpty().size }
+                                    scope.launch { listState.animateScrollToItem(itemIndex) }
+                                } else {
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar("No classes scheduled on ${day.lowercase().replaceFirstChar(Char::uppercase)}")
+                                    }
+                                }
+                            },
+                        shape = RoundedCornerShape(AppRadius.Small),
+                        color = background,
+                        tonalElevation = if (hasClasses) 1.dp else 0.dp
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = day,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = foreground,
+                                fontWeight = if (hasClasses) FontWeight.SemiBold else FontWeight.Normal,
+                                maxLines = 1
+                            )
+                        }
                     }
                 }
+            }
+            Text(
+                text = "${schedule.entries.size} classes this week",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
 
-                Spacer(Modifier.height(16.dp))
-
-                Text(
-                    text = "Semester Schedule",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-
-                Spacer(Modifier.height(6.dp))
-
-                Surface(
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    shape = RoundedCornerShape(AppRadius.Small)
-                ) {
-                    Text(
-                        text = "Coming Soon",
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        fontWeight = FontWeight.Bold
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = AppSpacing.Md),
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
+        ) {
+            if (groups.isEmpty()) {
+                item {
+                    EmptyState(
+                        icon = Icons.Rounded.EventAvailable,
+                        title = "No weekly schedule",
+                        body = "Your class schedule is not available on the IULMS portal right now."
                     )
                 }
+            } else {
+                groups.forEach { (day, entries) ->
+                    stickyHeader(key = "day-$day") {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.background
+                        ) {
+                            Text(
+                                text = day,
+                                modifier = Modifier.padding(vertical = AppSpacing.Sm),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    items(entries, key = { entry -> "$day-${entry.courseCode}-${entry.time}" }) { entry ->
+                        WeeklyScheduleCard(entry)
+                    }
+                }
+            }
+        }
+    }
+}
 
-                Spacer(Modifier.height(12.dp))
-
+@Composable
+private fun WeeklyScheduleCard(entry: WeeklyScheduleEntry) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(AppRadius.Medium),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (entry.time.isNotBlank()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Schedule,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(AppSpacing.Sm))
+                        Text(
+                            text = formatTime12Hour(entry.time),
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    scheduleDurationLabel(entry.time)?.let { duration ->
+                        Spacer(Modifier.width(AppSpacing.Sm))
+                        DurationBadge(duration)
+                    }
+                }
+            }
+            Text(
+                text = entry.courseTitle.ifBlank { "Class" },
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            if (entry.location.isNotBlank()) InfoLine(Icons.Rounded.LocationOn, "Room", entry.location)
+            if (entry.faculty.isNotBlank()) InfoLine(Icons.Rounded.Person, "Faculty", entry.faculty)
+            if (entry.courseCode.isNotBlank() || entry.edpCode.isNotBlank()) {
                 Text(
-                    text = "Semester class schedule integration will be available in a future update.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
+                    text = listOf(entry.courseCode, entry.edpCode).filter(String::isNotBlank).joinToString(" · "),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+        }
+    }
+}
+
+private val timeTokenPattern = Regex(
+    "(?i)(?<![\\d:])(\\d{1,2}):(\\d{2})(?:\\s*(AM|PM|A\\.M\\.|P\\.M\\.))?(?!\\d)"
+)
+
+private fun formatTime12Hour(time: String): String = timeTokenPattern.replace(time) { match ->
+    val hour = match.groupValues[1].toIntOrNull() ?: return@replace match.value
+    val minute = match.groupValues[2].toIntOrNull() ?: return@replace match.value
+    if (hour !in 0..23 || minute !in 0..59) return@replace match.value
+
+    val suffix = match.groupValues[3].replace(".", "").uppercase()
+    val hour12 = when (hour % 12) {
+        0 -> 12
+        else -> hour % 12
+    }
+    val period = if (suffix == "AM" || suffix == "PM") {
+        suffix
+    } else if (hour < 12) {
+        "AM"
+    } else {
+        "PM"
+    }
+    "$hour12:${minute.toString().padStart(2, '0')} $period"
+}
+
+private fun scheduleStartMinutes(time: String): Int {
+    val match = timeTokenPattern.find(time) ?: return Int.MAX_VALUE
+    val hour = match.groupValues[1].toIntOrNull() ?: return Int.MAX_VALUE
+    val minute = match.groupValues[2].toIntOrNull() ?: return Int.MAX_VALUE
+    if (hour !in 0..23 || minute !in 0..59) return Int.MAX_VALUE
+
+    val suffix = match.groupValues[3].replace(".", "").uppercase()
+    val hour24 = when (suffix) {
+        "AM" -> hour % 12
+        "PM" -> (hour % 12) + 12
+        else -> hour % 24
+    }
+    return hour24 * 60 + minute
+}
+
+private fun scheduleDurationLabel(time: String): String? {
+    val tokens = timeTokenPattern.findAll(time).take(2).toList()
+    if (tokens.size < 2) return null
+
+    val first = tokens[0]
+    val second = tokens[1]
+    val firstHour = first.groupValues[1].toIntOrNull() ?: return null
+    val secondHour = second.groupValues[1].toIntOrNull() ?: return null
+    val firstSuffix = first.groupValues[3].replace(".", "").uppercase()
+    val secondSuffix = second.groupValues[3].replace(".", "").uppercase()
+
+    val inferredFirstSuffix = when {
+        firstSuffix == "AM" || firstSuffix == "PM" -> firstSuffix
+        firstHour > 12 -> ""
+        secondSuffix != "AM" && secondSuffix != "PM" -> ""
+        firstHour % 12 > secondHour % 12 -> if (secondSuffix == "AM") "PM" else "AM"
+        else -> secondSuffix
+    }
+    val inferredSecondSuffix = when {
+        secondSuffix == "AM" || secondSuffix == "PM" -> secondSuffix
+        secondHour > 12 -> ""
+        firstSuffix != "AM" && firstSuffix != "PM" -> ""
+        secondHour % 12 < firstHour % 12 -> if (firstSuffix == "AM") "PM" else "AM"
+        else -> firstSuffix
+    }
+
+    fun minutes(token: MatchResult, inferredSuffix: String): Int? {
+        val hour = token.groupValues[1].toIntOrNull() ?: return null
+        val minute = token.groupValues[2].toIntOrNull() ?: return null
+        if (hour !in 0..23 || minute !in 0..59) return null
+        val suffix = token.groupValues[3].replace(".", "").uppercase().ifBlank { inferredSuffix }
+        val hour24 = when (suffix) {
+            "AM" -> hour % 12
+            "PM" -> (hour % 12) + 12
+            else -> hour % 24
+        }
+        return hour24 * 60 + minute
+    }
+
+    val start = minutes(first, inferredFirstSuffix) ?: return null
+    var end = minutes(second, inferredSecondSuffix) ?: return null
+    if (end < start) end += 24 * 60
+    val durationMinutes = end - start
+    if (durationMinutes !in 1..(12 * 60)) return null
+
+    val hours = durationMinutes / 60
+    val minutes = durationMinutes % 60
+    return when {
+        hours == 0 -> "$minutes min"
+        minutes == 0 -> "$hours hr${if (hours == 1) "" else "s"}"
+        else -> "$hours hr${if (hours == 1) "" else "s"} $minutes min"
+    }
+}
+
+@Composable
+private fun AttendanceScreen(
+    attendance: AttendanceSummary?,
+    screenState: ScreenLoadState,
+    onRetry: () -> Unit
+) {
+    if (attendance == null) {
+        LoadStateContent("Loading attendance…", screenState, onRetry)
+        return
+    }
+
+    val totalSessions = attendance.courses.sumOf { it.totalSessions }
+    val totalPresent = attendance.courses.sumOf { it.present }
+    val percent = if (totalSessions > 0) (totalPresent * 100f / totalSessions).toInt() else 0
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = AppSpacing.Md),
+        verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
+    ) {
+        item {
+            ScreenHeading(
+                title = "Attendance",
+                subtitle = "Course-wise sessions and class records"
+            )
+        }
+        item {
+            HeroMetricCard(
+                label = "Overall attendance",
+                value = if (totalSessions > 0) "$percent%" else "—",
+                helper = if (totalSessions > 0) "$totalPresent of $totalSessions sessions attended"
+                else "No attendance sessions recorded yet",
+                icon = Icons.AutoMirrored.Rounded.FactCheck
+            )
+        }
+        if (attendance.courses.isEmpty()) {
+            item {
+                EmptyState(
+                    icon = Icons.AutoMirrored.Rounded.FactCheck,
+                    title = "No attendance data",
+                    body = "Course attendance is not available on the IULMS portal right now."
+                )
+            }
+        } else {
+            items(attendance.courses) { course -> AttendanceCourseCard(course) }
+        }
+    }
+}
+
+@Composable
+private fun AttendanceCourseCard(course: AttendanceCourse) {
+    var expanded by remember(course.name) { mutableStateOf(false) }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(AppRadius.Medium),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.Sm)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clickable(
+                        onClickLabel = if (expanded) "Hide session details" else "Show session details"
+                    ) { expanded = !expanded }
+                    .semantics {
+                        role = Role.Button
+                        stateDescription = if (expanded) "Session details expanded" else "Session details collapsed"
+                    },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = course.name,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Icon(
+                    imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.Sm)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(AppSpacing.Sm)
+                ) {
+                    AttendanceMetric("Present", course.present.toString(), Modifier.weight(1f))
+                    AttendanceMetric("Absent", course.absent.toString(), Modifier.weight(1f))
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(AppSpacing.Sm)
+                ) {
+                    AttendanceMetric("Sessions", course.totalSessions.toString(), Modifier.weight(1f))
+                    AttendanceMetric(
+                        "Attend. %",
+                        if (course.totalSessions > 0) "${course.attendancePercent}%" else "—",
+                        Modifier.weight(1f)
+                    )
+                }
+            }
+            if (expanded) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+                if (course.faculty.isNotBlank()) InfoLine(Icons.Rounded.Person, "Faculty", course.faculty)
+                if (course.schedule.isNotBlank()) {
+                    InfoLine(Icons.Rounded.Schedule, "Schedule", formatTime12Hour(course.schedule))
+                }
+                if (course.sessions.isEmpty()) {
+                    Text(
+                        text = "No individual session records are available.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    course.sessions.forEach { session ->
+                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(
+                                text = "Lecture ${session.lectureNumber.ifBlank { "—" }}",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = session.values.mapIndexed { index, value ->
+                                    val label = course.sessionHeaders.getOrNull(index)
+                                        ?: "Session ${index + 1}"
+                                    "$label: ${value.ifBlank { "—" }}"
+                                }.joinToString("  ·  "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AttendanceMetric(label: String, value: String, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(AppRadius.Small),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -828,7 +1269,7 @@ private fun ExamScheduleCard(entry: ExamScheduleEntry) {
         shape = RoundedCornerShape(AppRadius.Large),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
-        Column(Modifier.padding(17.dp)) {
+        Column(Modifier.padding(AppSpacing.Lg)) {
             Row(verticalAlignment = Alignment.Top) {
                 Text(
                     text = entry.courseTitle,
@@ -895,7 +1336,7 @@ private fun ExamScheduleCard(entry: ExamScheduleEntry) {
                             )
                             Spacer(Modifier.width(6.dp))
                             Text(
-                                text = entry.time,
+                                text = formatTime12Hour(entry.time),
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
@@ -923,10 +1364,12 @@ private fun ExamScheduleCard(entry: ExamScheduleEntry) {
 private fun VoucherScreen(
     vouchers: List<Voucher>?,
     downloadingVoucherNumber: String?,
+    screenState: ScreenLoadState,
+    onRetry: () -> Unit,
     onDownload: (Voucher) -> Unit
 ) {
     if (vouchers == null) {
-        LoadingPlaceholder("Loading vouchers…")
+        LoadStateContent("Loading vouchers…", screenState, onRetry)
         return
     }
 
@@ -934,8 +1377,8 @@ private fun VoucherScreen(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(13.dp)
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = AppSpacing.Md),
+        verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
     ) {
         item {
             ScreenHeading(
@@ -991,7 +1434,7 @@ private fun VoucherCard(
         shape = RoundedCornerShape(AppRadius.Large),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
-        Column(Modifier.padding(17.dp)) {
+        Column(Modifier.padding(AppSpacing.Lg)) {
             Row(verticalAlignment = Alignment.Top) {
                 Column(Modifier.weight(1f)) {
                     Text(voucher.description, style = MaterialTheme.typography.titleMedium)
@@ -1057,9 +1500,14 @@ private fun VoucherCard(
 }
 
 @Composable
-private fun TranscriptScreen(transcript: Transcript?, studentName: String?) {
+private fun TranscriptScreen(
+    transcript: Transcript?,
+    studentName: String?,
+    screenState: ScreenLoadState,
+    onRetry: () -> Unit
+) {
     if (transcript == null) {
-        LoadingPlaceholder("Loading transcript…")
+        LoadStateContent("Loading transcript…", screenState, onRetry)
         return
     }
 
@@ -1081,7 +1529,7 @@ private fun TranscriptScreen(transcript: Transcript?, studentName: String?) {
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = AppSpacing.Md),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
@@ -1118,8 +1566,8 @@ private fun TranscriptScreen(transcript: Transcript?, studentName: String?) {
 
         item {
             InsightRow(
-                Triple("Credits", completed.toString(), Icons.Rounded.MenuBook),
-                Triple("Entries", transcript.courses.size.toString(), Icons.Rounded.LibraryBooks),
+                Triple("Credits", completed.toString(), Icons.AutoMirrored.Rounded.MenuBook),
+                Triple("Entries", transcript.courses.size.toString(), Icons.AutoMirrored.Rounded.LibraryBooks),
                 Triple("A grades", aGrades.toString(), Icons.Rounded.Grade)
             )
         }
@@ -1186,7 +1634,7 @@ private fun CreditProgressCard(completed: Int, remaining: Int) {
         shape = RoundedCornerShape(AppRadius.Large),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
-        Column(Modifier.padding(18.dp)) {
+        Column(Modifier.padding(AppSpacing.Lg)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     Icons.Rounded.Timeline,
@@ -1473,6 +1921,22 @@ private fun DueBadge(status: DueInfo) {
 }
 
 @Composable
+private fun DurationBadge(duration: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.primaryContainer,
+        shape = CircleShape
+    ) {
+        Text(
+            text = duration,
+            modifier = Modifier.padding(horizontal = AppSpacing.Md, vertical = AppSpacing.Sm),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+@Composable
 private fun ScreenHeading(
     title: String,
     subtitle: String,
@@ -1614,7 +2078,10 @@ private fun EmptyState(icon: ImageVector, title: String, body: String) {
 @Composable
 private fun LoadingPlaceholder(text: String) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             CircularProgressIndicator()
             Spacer(Modifier.height(12.dp))
             Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1623,14 +2090,73 @@ private fun LoadingPlaceholder(text: String) {
 }
 
 @Composable
-private fun BoxScope.ErrorBanner(
+private fun LoadStateContent(
+    loadingText: String,
+    state: ScreenLoadState,
+    onRetry: () -> Unit
+) {
+    val error = state.error
+    if (error == null) {
+        LoadingPlaceholder(loadingText)
+        return
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
+            ) {
+                Icon(
+                    Icons.Rounded.CloudOff,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(28.dp)
+                )
+                Text(
+                    text = "Connection problem",
+                    style = MaterialTheme.typography.titleMedium,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    text = error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+                Button(
+                    onClick = onRetry,
+                    modifier = Modifier.heightIn(min = 48.dp)
+                ) {
+                    Icon(Icons.Rounded.Refresh, contentDescription = null)
+                    Spacer(Modifier.width(AppSpacing.Sm))
+                    Text("Try again")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ErrorBanner(
     message: String,
     onRetry: (() -> Unit)? = null
 ) {
     Surface(
         modifier = Modifier
-            .align(Alignment.TopCenter)
-            .padding(AppSpacing.Lg)
+            .fillMaxWidth()
+            .padding(horizontal = 18.dp, vertical = AppSpacing.Sm)
             .semantics {
                 liveRegion = LiveRegionMode.Assertive
             },

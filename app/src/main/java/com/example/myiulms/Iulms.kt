@@ -1,6 +1,7 @@
 package com.example.myiulms
 
 import android.content.Context
+import androidx.core.content.edit
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import okhttp3.Cookie
@@ -51,6 +52,42 @@ data class ExamSchedule(
     val notice: String?,
     val entries: List<ExamScheduleEntry>
 )
+
+data class WeeklyScheduleEntry(
+    val day: String,
+    val time: String,
+    val courseTitle: String,
+    val faculty: String,
+    val location: String,
+    val edpCode: String,
+    val courseCode: String
+)
+
+data class WeeklySchedule(
+    val title: String,
+    val entries: List<WeeklyScheduleEntry>
+)
+
+data class AttendanceSession(
+    val lectureNumber: String,
+    val values: List<String>
+)
+
+data class AttendanceCourse(
+    val name: String,
+    val totalSessions: Int,
+    val present: Int,
+    val absent: Int,
+    val schedule: String,
+    val faculty: String,
+    val sessionHeaders: List<String>,
+    val sessions: List<AttendanceSession>
+) {
+    val attendancePercent: Int
+        get() = if (totalSessions > 0) ((present * 100f) / totalSessions).toInt() else 0
+}
+
+data class AttendanceSummary(val courses: List<AttendanceCourse>)
 
 data class Voucher(
     val number: String,
@@ -350,6 +387,125 @@ fun parseExamSchedule(html: String): ExamSchedule {
     return ExamSchedule(title = title, notice = notice, entries = entries)
 }
 
+fun parseWeeklySchedule(html: String): WeeklySchedule {
+    val doc = Jsoup.parse(html)
+    val title = doc.select(".label-head-text").text()
+        .replace("\\s+".toRegex(), " ")
+        .trim()
+        .ifBlank { "Weekly class schedule" }
+    val dateCells = doc.select("td.dateStyle")
+    val detailCells = doc.select("td.detailsStyle")
+    val entries = mutableListOf<WeeklyScheduleEntry>()
+
+    for (index in 0 until minOf(dateCells.size, detailCells.size)) {
+        val dateCell = dateCells[index]
+        val detailCell = detailCells[index]
+        val day = dateCell.selectFirst(".dayStyle")?.text()
+            ?.replace("\\s+".toRegex(), " ")
+            ?.trim()
+            .orEmpty()
+        val time = dateCell.select("tr").getOrNull(1)?.text()
+            ?.replace("\\s+".toRegex(), " ")
+            ?.trim()
+            .orEmpty()
+
+        var courseTitle = ""
+        var faculty = ""
+        var location = ""
+        var edpCode = ""
+        var courseCode = ""
+        for (row in detailCell.select("tr")) {
+            val text = row.text().replace("\\s+".toRegex(), " ").trim()
+            when {
+                text.contains("Course Title", ignoreCase = true) -> courseTitle = text.substringAfter(":").trim()
+                text.contains("Faculty", ignoreCase = true) -> faculty = text.substringAfter(":").trim()
+                text.contains("Location", ignoreCase = true) -> location = text.substringAfter(":").trim()
+                text.contains("EDP Code", ignoreCase = true) -> {
+                    edpCode = Regex("EDP Code\\s*:\\s*([^\\s]+)", RegexOption.IGNORE_CASE)
+                        .find(text)?.groupValues?.get(1).orEmpty()
+                    courseCode = Regex("Course Code\\s*:\\s*([^\\s]+)", RegexOption.IGNORE_CASE)
+                        .find(text)?.groupValues?.get(1).orEmpty()
+                }
+                text.contains("Course Code", ignoreCase = true) -> courseCode = text.substringAfter(":").trim()
+            }
+        }
+
+        if (day.isNotBlank() || courseTitle.isNotBlank()) {
+            entries += WeeklyScheduleEntry(
+                day = day,
+                time = time,
+                courseTitle = courseTitle,
+                faculty = faculty,
+                location = location,
+                edpCode = edpCode,
+                courseCode = courseCode
+            )
+        }
+    }
+
+    return WeeklySchedule(title, entries)
+}
+
+fun parseAttendance(html: String): AttendanceSummary {
+    val doc = Jsoup.parse(html)
+    val courseRows = doc.selectFirst("table.attendance-table")?.select("tr.attendanceRow").orEmpty()
+    val courses = courseRows.mapNotNull { row ->
+        val name = row.selectFirst(".attendanceRowCourse")?.text()?.trim().orEmpty()
+        if (name.isBlank()) return@mapNotNull null
+
+        val statCells = row.select("td.attendanceRowStat")
+        var total = statCells.getOrNull(0)?.text()?.trim()?.toIntOrNull() ?: 0
+        var present = statCells.getOrNull(1)?.text()?.trim()?.toIntOrNull() ?: 0
+        var absent = statCells.getOrNull(2)?.text()?.trim()?.toIntOrNull() ?: 0
+
+        val key = row.selectFirst("a[onclick]")?.attr("onclick")
+            ?.let { Regex("viewattendance\\((\\d+)\\)").find(it)?.groupValues?.get(1) }
+        val modal = key?.let { doc.getElementById("myModal_$it") }
+        val sessionTable = modal?.selectFirst("table.attendance-table")
+        val sessionHeaders = sessionTable?.selectFirst("tr")?.select("th")
+            ?.map { it.text().trim() }
+            .orEmpty()
+        val sessions = sessionTable?.select("tr")
+            ?.mapNotNull { sessionRow ->
+                val cells = sessionRow.select("td")
+                if (cells.size < 2 || sessionRow.hasClass("attendance-table-summary")) {
+                    null
+                } else {
+                    AttendanceSession(
+                        lectureNumber = cells.first()?.text()?.trim().orEmpty(),
+                        values = cells.drop(1).map { it.text().trim() }
+                    )
+                }
+            }
+            .orEmpty()
+
+        modal?.select("tr.attendance-table-summary")?.forEach { summaryRow ->
+            val cells = summaryRow.select("td")
+            for (index in 0 until cells.lastIndex) {
+                val label = cells[index].text().lowercase()
+                val value = cells[index + 1].text().trim().toIntOrNull() ?: continue
+                when {
+                    "total sessions" in label -> total = value
+                    "total present" in label -> present = value
+                    "total absent" in label -> absent = value
+                }
+            }
+        }
+
+        AttendanceCourse(
+            name = name,
+            totalSessions = total,
+            present = present,
+            absent = absent,
+            schedule = modal?.getElementById("schedule")?.text()?.trim().orEmpty(),
+            faculty = modal?.getElementById("facultyName")?.text()?.trim().orEmpty(),
+            sessionHeaders = sessionHeaders.drop(1),
+            sessions = sessions
+        )
+    }
+    return AttendanceSummary(courses)
+}
+
 fun parseVouchers(html: String): List<Voucher> {
     val doc = Jsoup.parse(html)
     val table = doc.getElementById("voucherTable") ?: return emptyList()
@@ -424,7 +580,10 @@ class SecureStore(private val context: Context) {
 
     fun save(user: String, pass: String) {
         try {
-            prefs.edit().putString("u", user).putString("p", pass).apply()
+            prefs.edit {
+                putString("u", user)
+                putString("p", pass)
+            }
         } catch (e: Exception) {
             // save na ho paye to app phir bhi chalti rahe
         }
@@ -443,7 +602,7 @@ class SecureStore(private val context: Context) {
 
     fun clear() {
         try {
-            prefs.edit().clear().apply()
+            prefs.edit { clear() }
         } catch (e: Exception) {
         }
     }

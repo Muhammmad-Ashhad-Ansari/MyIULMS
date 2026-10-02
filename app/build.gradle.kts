@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.myiulms"
         minSdk = 26
         targetSdk = 37
-        versionCode = 6
-        versionName = "0.5.0"
+        versionCode = 7
+        versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -50,10 +50,11 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jsoup:jsoup:1.17.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("androidx.security:security-crypto:1.1.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
 
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)

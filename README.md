@@ -38,15 +38,15 @@ The app connects directly to IULMS. It does not use a MyIULMS backend.
 ## Features
 
 - **Sign in and session recovery** using an existing IULMS account
+- **Password-manager support** for saved registration numbers and passwords
 - **Exam results** with course marks, totals, grades, grade points, and semester GPA when provided
-- **Exam schedules** with dates, times, course details, faculty, and location when available
+- **Schedules** for exams and recurring weekly classes, with weekday shortcuts, class times, duration, faculty, and location
+- **Attendance** with course-wise present/absent totals, attendance percentage, and expandable session records
 - **Fee vouchers** with amounts, due dates, and due/overdue indicators; open a voucher to save or print it as a PDF
 - **Transcript** with CGPA, courses, credit hours, grades, and GPA values
 - **Academic insights** including credit-hour progress and weak-course filtering
 - **Shareable academic summaries** for results and transcripts
 - **Light and dark themes** with a saved theme preference
-
-The semester class timetable and attendance are not currently implemented.
 
 ## How it works
 
@@ -62,6 +62,7 @@ Since the app relies on IULMS page structures and endpoints, changes to the univ
 
 - Credentials are entered by the user and are not hard-coded in the app source.
 - If **Remember me** is selected, login details are stored locally using AndroidX `EncryptedSharedPreferences` backed by Android Keystore encryption.
+- The encrypted credential file is excluded from Android cloud backups and device-to-device transfers.
 - Session cookies are kept in the running app's HTTP client.
 - Academic requests go directly to IULMS; the project has no separate application backend.
 
@@ -134,14 +135,18 @@ On Windows PowerShell:
 
 The APK is generated at `app/build/outputs/apk/debug/app-debug.apk`.
 
+Run the local unit tests with:
+
+```bash
+./gradlew testDebugUnitTest
+```
+
 ## Releases
 
-See [GitHub Releases](https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases) for available builds. The Gradle project version currently identifies itself as **0.5.0**; release availability and signing details are listed with each published build.
+See [GitHub Releases](https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases) for published builds. The project is being prepared as **v1.0.0** (version code **7**). A release APK must be signed with the maintainer's private release key before it is distributed; never publish an unsigned APK or commit the signing key to this repository.
 
 ## Current scope and limitations
 
-- Exam schedules are available; the semester class timetable is not implemented.
-- Attendance is not implemented.
 - IULMS HTML and JSON changes can affect data loading.
 - Portal account types and historical records may vary; not every variation is guaranteed to be supported.
 - Voucher availability and output depend on what IULMS returns for the signed-in account.
