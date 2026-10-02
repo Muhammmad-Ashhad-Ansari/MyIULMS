@@ -1,6 +1,8 @@
 package com.example.myiulms
 
 import android.content.res.Configuration
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -113,10 +115,27 @@ fun App(
     darkTheme: Boolean,
     onThemeToggle: () -> Unit
 ) {
+    val context = LocalContext.current
     if (vm.loggedIn) {
         HomeScreen(vm, darkTheme, onThemeToggle)
     } else {
-        LoginScreen(vm, darkTheme, onThemeToggle)
+        LoginScreen(vm, darkTheme, onThemeToggle, onCheckForUpdates = vm::checkForUpdates)
+    }
+
+    vm.updateCheckState?.let { state ->
+        UpdateCheckDialog(
+            state = state,
+            onDismiss = vm::dismissUpdateCheck,
+            onRetry = vm::checkForUpdates,
+            onOpenRelease = { releaseUrl ->
+                vm.dismissUpdateCheck()
+                runCatching {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(releaseUrl)))
+                }.onFailure {
+                    Toast.makeText(context, "Couldn't open the release page", Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
     }
 }
 
@@ -124,7 +143,8 @@ fun App(
 private fun LoginScreen(
     vm: MainViewModel,
     darkTheme: Boolean,
-    onThemeToggle: () -> Unit
+    onThemeToggle: () -> Unit,
+    onCheckForUpdates: () -> Unit
 ) {
     var user by remember(vm.savedUser) { mutableStateOf(vm.savedUser.orEmpty()) }
     var pass by remember(vm.savedPassword) { mutableStateOf(vm.savedPassword.orEmpty()) }
@@ -328,21 +348,39 @@ private fun LoginScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
-        Surface(
+        Row(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(16.dp),
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 3.dp,
-            shadowElevation = 2.dp
+            horizontalArrangement = Arrangement.spacedBy(AppSpacing.Sm)
         ) {
-            IconButton(onClick = onThemeToggle) {
-                Icon(
-                    imageVector = if (darkTheme) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
-                    contentDescription = if (darkTheme) "Switch to light theme" else "Switch to dark theme",
-                    tint = MaterialTheme.colorScheme.primary
-                )
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 3.dp,
+                shadowElevation = 2.dp
+            ) {
+                IconButton(onClick = onCheckForUpdates) {
+                    Icon(
+                        Icons.Rounded.Update,
+                        contentDescription = "Check for updates",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 3.dp,
+                shadowElevation = 2.dp
+            ) {
+                IconButton(onClick = onThemeToggle) {
+                    Icon(
+                        imageVector = if (darkTheme) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
+                        contentDescription = if (darkTheme) "Switch to light theme" else "Switch to dark theme",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
         }
     }
@@ -395,6 +433,7 @@ private fun HomeScreen(
                 onThemeToggle = onThemeToggle,
                 onRefresh = { vm.refresh(tab) },
                 refreshing = screenState.loading,
+                onCheckForUpdates = vm::checkForUpdates,
                 onLogout = vm::logout,
                 studentName = vm.studentName
             )
@@ -457,6 +496,7 @@ private fun HomeScreen(
                     )
                 }
             }
+
         }
     }
 }
@@ -496,8 +536,11 @@ private fun PortalTopBar(
     onThemeToggle: () -> Unit,
     onRefresh: () -> Unit,
     refreshing: Boolean,
+    onCheckForUpdates: () -> Unit,
     onLogout: () -> Unit
 ) {
+    var menuExpanded by remember { mutableStateOf(false) }
+
     TopAppBar(
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -553,13 +596,104 @@ private fun PortalTopBar(
                 )
             }
 
-            IconButton(onClick = onLogout) {
-                Icon(Icons.AutoMirrored.Rounded.ExitToApp, contentDescription = "Log out")
+            Box {
+                IconButton(onClick = { menuExpanded = true }) {
+                    Icon(Icons.Rounded.MoreVert, contentDescription = "More options")
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Check for updates") },
+                        leadingIcon = { Icon(Icons.Rounded.Update, contentDescription = null) },
+                        onClick = {
+                            menuExpanded = false
+                            onCheckForUpdates()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Sign out") },
+                        leadingIcon = {
+                            Icon(Icons.AutoMirrored.Rounded.ExitToApp, contentDescription = null)
+                        },
+                        onClick = {
+                            menuExpanded = false
+                            onLogout()
+                        }
+                    )
+                }
             }
         },
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.background
         )
+    )
+}
+
+@Composable
+private fun UpdateCheckDialog(
+    state: UpdateCheckState,
+    onDismiss: () -> Unit,
+    onRetry: () -> Unit,
+    onOpenRelease: (String) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                when (state) {
+                    is UpdateCheckState.Available -> Icons.Rounded.SystemUpdate
+                    is UpdateCheckState.UpToDate -> Icons.Rounded.CheckCircle
+                    is UpdateCheckState.Failed -> Icons.Rounded.CloudOff
+                    UpdateCheckState.Checking -> Icons.Rounded.SystemUpdate
+                },
+                contentDescription = null
+            )
+        },
+        title = {
+            Text(
+                when (state) {
+                    is UpdateCheckState.Available -> "Update available"
+                    is UpdateCheckState.UpToDate -> "You're up to date"
+                    is UpdateCheckState.Failed -> "Couldn't check for updates"
+                    UpdateCheckState.Checking -> "Checking for updates"
+                }
+            )
+        },
+        text = {
+            when (state) {
+                is UpdateCheckState.Available -> Text(
+                    "Version ${state.latest.version} is available. You're using version ${state.currentVersion}."
+                )
+                is UpdateCheckState.UpToDate -> Text("You're using the latest version (${state.currentVersion}).")
+                is UpdateCheckState.Failed -> Text(state.message)
+                UpdateCheckState.Checking -> Row(
+                    horizontalArrangement = Arrangement.spacedBy(AppSpacing.Md),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                    Text("Checking the latest GitHub release…")
+                }
+            }
+        },
+        confirmButton = {
+            when (state) {
+                is UpdateCheckState.Available -> TextButton(
+                    onClick = { onOpenRelease(state.latest.releaseUrl) }
+                ) { Text("View update") }
+                is UpdateCheckState.Failed -> TextButton(onClick = onRetry) { Text("Try again") }
+                is UpdateCheckState.UpToDate -> TextButton(onClick = onDismiss) { Text("Done") }
+                UpdateCheckState.Checking -> TextButton(onClick = onDismiss) { Text("Close") }
+            }
+        },
+        dismissButton = {
+            when (state) {
+                is UpdateCheckState.Available,
+                is UpdateCheckState.Failed -> TextButton(onClick = onDismiss) { Text("Later") }
+                else -> Unit
+            }
+        }
     )
 }
 

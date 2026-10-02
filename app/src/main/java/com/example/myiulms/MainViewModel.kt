@@ -6,7 +6,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -17,6 +19,7 @@ import java.net.UnknownHostException
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val client = IulmsClient()
     private val store = SecureStore(app)
+    private var updateCheckJob: Job? = null
 
     var loggedIn by mutableStateOf(false)
         private set
@@ -25,6 +28,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var errorMsg by mutableStateOf<String?>(null)
         private set
     var lastUpdatedAt by mutableStateOf<Long?>(null)
+        private set
+    internal var updateCheckState by mutableStateOf<UpdateCheckState?>(null)
         private set
     var screenLoadStates by mutableStateOf<Map<Int, ScreenLoadState>>(emptyMap())
         private set
@@ -43,6 +48,43 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var voucherActionError by mutableStateOf<String?>(null)
         private set
+
+    fun checkForUpdates() {
+        if (updateCheckState == UpdateCheckState.Checking) return
+
+        updateCheckState = UpdateCheckState.Checking
+        updateCheckJob = viewModelScope.launch {
+            updateCheckState = try {
+                val latest = withContext(Dispatchers.IO) { fetchLatestAppRelease() }
+                val currentVersion = installedVersionName()
+                if (isVersionNewer(latest.version, currentVersion)) {
+                    UpdateCheckState.Available(currentVersion, latest)
+                } else {
+                    UpdateCheckState.UpToDate(currentVersion)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                UpdateCheckState.Failed(
+                    "Couldn't check for updates. Check your internet connection and try again."
+                )
+            }
+        }
+    }
+
+    fun dismissUpdateCheck() {
+        updateCheckJob?.cancel()
+        updateCheckJob = null
+        updateCheckState = null
+    }
+
+    private fun installedVersionName(): String {
+        @Suppress("DEPRECATION")
+        return getApplication<Application>().packageManager
+            .getPackageInfo(getApplication<Application>().packageName, 0)
+            .versionName
+            .orEmpty()
+    }
     var transcript by mutableStateOf<Transcript?>(null)
         private set
 
