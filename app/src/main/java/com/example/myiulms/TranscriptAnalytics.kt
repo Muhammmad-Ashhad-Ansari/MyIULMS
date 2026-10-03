@@ -56,7 +56,10 @@ fun gradeMeaning(grade: String): String {
         g == "A" || g == "A-" -> "Strong"
         g.startsWith("B") -> "Average"
         g.startsWith("C") -> "Weak"
-        g == "D" || g == "F" -> "Critical"
+        // D is a minimum-pass grade under the Main Campus scheme, so it must not
+        // share the "Critical" label with a failing F grade.
+        g == "D" -> "Minimum Pass"
+        g == "F" -> "Critical"
         else -> "Not counted"
     }
 }

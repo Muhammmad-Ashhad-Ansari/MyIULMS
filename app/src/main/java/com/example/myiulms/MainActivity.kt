@@ -60,6 +60,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.myiulms.ui.policy.AcademicPolicyHost
+import com.example.myiulms.ui.policy.LocalAcademicPolicyState
+import com.example.myiulms.ui.policy.PolicyInfoButton
+import com.example.myiulms.ui.policy.PolicyOverflowItem
+import com.example.myiulms.ui.policy.rememberAcademicPolicyState
 import com.example.myiulms.ui.theme.*
 import java.text.NumberFormat
 import java.time.LocalDate
@@ -425,79 +430,86 @@ private fun HomeScreen(
     }
 
     val context = LocalContext.current
+    val policyState = rememberAcademicPolicyState()
 
-    Scaffold(
-        topBar = {
-            PortalTopBar(
-                darkTheme = darkTheme,
-                onThemeToggle = onThemeToggle,
-                onRefresh = { vm.refresh(tab) },
-                refreshing = screenState.loading,
-                onCheckForUpdates = vm::checkForUpdates,
-                onLogout = vm::logout,
-                studentName = vm.studentName
-            )
-        },
-        bottomBar = {
-            NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface,
-                tonalElevation = 1.dp
+    CompositionLocalProvider(LocalAcademicPolicyState provides policyState) {
+        Scaffold(
+            topBar = {
+                PortalTopBar(
+                    darkTheme = darkTheme,
+                    onThemeToggle = onThemeToggle,
+                    onRefresh = { vm.refresh(tab) },
+                    refreshing = screenState.loading,
+                    onCheckForUpdates = vm::checkForUpdates,
+                    onLogout = vm::logout,
+                    studentName = vm.studentName
+                )
+            },
+            bottomBar = {
+                NavigationBar(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 1.dp
+                ) {
+                    NavItem(tab == 0, { tab = 0 }, Icons.Rounded.Event, if (useCompactNavLabels) "Sched." else "Schedule", showNavLabels)
+                    NavItem(tab == 1, { tab = 1 }, Icons.AutoMirrored.Rounded.FactCheck, if (useCompactNavLabels) "Attend" else "Attend.", showNavLabels)
+                    NavItem(tab == 2, { tab = 2 }, Icons.Rounded.Assessment, "Result", showNavLabels)
+                    NavItem(tab == 3, { tab = 3 }, Icons.Rounded.School, if (useCompactNavLabels) "Transcr." else "Transcript", showNavLabels)
+                    NavItem(tab == 4, { tab = 4 }, Icons.AutoMirrored.Rounded.ReceiptLong, if (useCompactNavLabels) "Voucher" else "Vouchers", showNavLabels)
+                }
+            },
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            containerColor = MaterialTheme.colorScheme.background
+        ) { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
             ) {
-                NavItem(tab == 0, { tab = 0 }, Icons.Rounded.Event, if (useCompactNavLabels) "Sched." else "Schedule", showNavLabels)
-                NavItem(tab == 1, { tab = 1 }, Icons.AutoMirrored.Rounded.FactCheck, if (useCompactNavLabels) "Attend" else "Attend.", showNavLabels)
-                NavItem(tab == 2, { tab = 2 }, Icons.Rounded.Assessment, "Result", showNavLabels)
-                NavItem(tab == 3, { tab = 3 }, Icons.Rounded.School, if (useCompactNavLabels) "Transcr." else "Transcript", showNavLabels)
-                NavItem(tab == 4, { tab = 4 }, Icons.AutoMirrored.Rounded.ReceiptLong, if (useCompactNavLabels) "Voucher" else "Vouchers", showNavLabels)
-            }
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        containerColor = MaterialTheme.colorScheme.background
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {
-            if (screenState.loading && hasData) {
-                LinearProgressIndicator(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .semantics { contentDescription = "Refreshing current screen" }
-                )
-            }
-            if (hasData && screenState.error != null) {
-                ErrorBanner(screenState.error, onRetry = { vm.refresh(tab) })
-            }
-            if (tab == 4 && vm.voucherActionError != null) {
-                ErrorBanner(
-                    message = vm.voucherActionError!!,
-                    onRetry = { vm.retryVoucherAction(context) }
-                )
-            }
-
-            Box(modifier = Modifier.weight(1f)) {
-                when (tab) {
-                    0 -> SchedulesScreen(
-                        vm.examSchedule,
-                        vm.weeklySchedule,
-                        screenState,
-                        onRetry = { vm.refresh(tab) },
-                        snackbarHostState = snackbarHostState
-                    )
-                    1 -> AttendanceScreen(vm.attendance, screenState, onRetry = { vm.refresh(tab) })
-                    2 -> ResultScreen(vm.examResult, vm.studentName, screenState, onRetry = { vm.refresh(tab) })
-                    3 -> TranscriptScreen(vm.transcript, vm.studentName, screenState, onRetry = { vm.refresh(tab) })
-                    else -> VoucherScreen(
-                        vouchers = vm.vouchers,
-                        downloadingVoucherNumber = vm.downloadingVoucherNumber,
-                        screenState = screenState,
-                        onRetry = { vm.refresh(tab) },
-                        onDownload = { voucher -> vm.openVoucher(context, voucher) }
+                if (screenState.loading && hasData) {
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics { contentDescription = "Refreshing current screen" }
                     )
                 }
-            }
+                if (hasData && screenState.error != null) {
+                    ErrorBanner(screenState.error, onRetry = { vm.refresh(tab) })
+                }
+                if (tab == 4 && vm.voucherActionError != null) {
+                    ErrorBanner(
+                        message = vm.voucherActionError!!,
+                        onRetry = { vm.retryVoucherAction(context) }
+                    )
+                }
 
+                Box(modifier = Modifier.weight(1f)) {
+                    when (tab) {
+                        0 -> SchedulesScreen(
+                            vm.examSchedule,
+                            vm.weeklySchedule,
+                            screenState,
+                            onRetry = { vm.refresh(tab) },
+                            snackbarHostState = snackbarHostState
+                        )
+                        1 -> AttendanceScreen(vm.attendance, screenState, onRetry = { vm.refresh(tab) })
+                        2 -> ResultScreen(vm.examResult, vm.studentName, screenState, onRetry = { vm.refresh(tab) })
+                        3 -> TranscriptScreen(vm.transcript, vm.studentName, screenState, onRetry = { vm.refresh(tab) })
+                        else -> VoucherScreen(
+                            vouchers = vm.vouchers,
+                            downloadingVoucherNumber = vm.downloadingVoucherNumber,
+                            screenState = screenState,
+                            onRetry = { vm.refresh(tab) },
+                            onDownload = { voucher -> vm.openVoucher(context, voucher) }
+                        )
+                    }
+                }
+
+            }
         }
+
+        // Single sheet instance for the whole app. Every entry point in the
+        // policy package funnels through the same hoisted state.
+        AcademicPolicyHost()
     }
 }
 
@@ -622,6 +634,8 @@ private fun PortalTopBar(
                             onLogout()
                         }
                     )
+
+                    PolicyOverflowItem(onDismissMenu = { menuExpanded = false })
                 }
             }
         },
@@ -728,15 +742,18 @@ private fun ResultScreen(
                     .trim(' ', '(', ')', '-')
                     .ifBlank { "Latest examination" },
                 action = {
-                    IconButton(
-                        onClick = {
-                            runCatching { shareResultAsPng(context, studentName, result) }
-                                .onFailure {
-                                    Toast.makeText(context, "Could not share result.", Toast.LENGTH_SHORT).show()
-                                }
+                    Row {
+                        PolicyInfoButton()
+                        IconButton(
+                            onClick = {
+                                runCatching { shareResultAsPng(context, studentName, result) }
+                                    .onFailure {
+                                        Toast.makeText(context, "Could not share result.", Toast.LENGTH_SHORT).show()
+                                    }
+                            }
+                        ) {
+                            Icon(Icons.Rounded.Share, "Share result")
                         }
-                    ) {
-                        Icon(Icons.Rounded.Share, "Share result")
                     }
                 }
             )
@@ -1671,15 +1688,18 @@ private fun TranscriptScreen(
                 "Transcript",
                 "Academic record and degree progress",
                 action = {
-                    IconButton(
-                        onClick = {
-                            runCatching { shareTranscriptAsPng(context, studentName, transcript) }
-                                .onFailure {
-                                    Toast.makeText(context, "Could not share transcript.", Toast.LENGTH_SHORT).show()
-                                }
+                    Row {
+                        PolicyInfoButton()
+                        IconButton(
+                            onClick = {
+                                runCatching { shareTranscriptAsPng(context, studentName, transcript) }
+                                    .onFailure {
+                                        Toast.makeText(context, "Could not share transcript.", Toast.LENGTH_SHORT).show()
+                                    }
+                            }
+                        ) {
+                            Icon(Icons.Rounded.Share, "Share transcript")
                         }
-                    ) {
-                        Icon(Icons.Rounded.Share, "Share transcript")
                     }
                 }
             )
