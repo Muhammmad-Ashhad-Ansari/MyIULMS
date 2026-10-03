@@ -143,7 +143,13 @@ Run the local unit tests with:
 
 ## Releases
 
-The latest stable release, [**MyIULMS v1.0.1**](https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/tag/v1.0.1), is available on GitHub Releases. Version **1.0.1** (version code **8**) adds an in-app update check. Future APK updates must use the same signing key so existing installations can update; keep a secure backup of that key and never commit it to this repository.
+The latest stable release, [**MyIULMS v1.0.1**](https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/tag/v1.0.1), is available on GitHub Releases. Version **1.0.1** (version code **8**) adds an in-app update check. Version **1.0.2** (version code **9**) adds a read-only Main Campus academic grading and merit-scholarship reference. Future APK updates must use the same signing key so existing installations can update; keep a secure backup of that key and never commit it to this repository.
+
+## Academic policy reference
+
+Iqra University Main Campus grading scales and merit-scholarship criteria are available in-app as a **read-only reference**. Open it from the dashboard overflow menu ("Grading & scholarship policy") or from the header action on the Result and Transcript tabs.
+
+The reference is display-only. It does not evaluate pass/fail, degree eligibility, or scholarship entitlement, and your portal result remains the record of your actual grades. Figures were transcribed from published university material; where this reference and the Office of the Registrar or the official undergraduate handbook disagree, **the official source wins**. Please report any discrepancy.
 
 ## Current scope and limitations
 
