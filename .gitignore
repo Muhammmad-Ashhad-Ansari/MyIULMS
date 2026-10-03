@@ -36,3 +36,7 @@ Thumbs.db
 .agents/
 .gemini/
 *.apk
+
+# Generated promo videos and render assets
+/brag-output/
+/brag-output-*/
