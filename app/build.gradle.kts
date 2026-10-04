@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.myiulms"
         minSdk = 26
         targetSdk = 37
-        versionCode = 9
-        versionName = "1.0.2"
+        versionCode = 10
+        versionName = "1.0.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
