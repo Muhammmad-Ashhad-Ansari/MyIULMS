@@ -143,7 +143,7 @@ Run the local unit tests with:
 
 ## Releases
 
-The latest stable release, [**MyIULMS v1.0.3**](https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/tag/v1.0.3), is available on GitHub Releases. Version **1.0.1** (version code **8**) adds an in-app update check. Version **1.0.2** (version code **9**) adds a read-only Main Campus academic grading and merit-scholarship reference. Version **1.0.3** (version code **10**) adds automatic GitHub update checking after sign-in, with a persistent 6-hour cooldown and silent failure when the check cannot reach GitHub; manual update checking is unchanged. Future APK updates must use the same signing key so existing installations can update; keep a secure backup of that key and never commit it to this repository.
+The latest stable release, [**MyIULMS v1.0.4**](https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/tag/v1.0.4), is available on GitHub Releases. Version **1.0.1** (version code **8**) adds an in-app update check. Version **1.0.2** (version code **9**) adds a read-only Main Campus academic grading and merit-scholarship reference. Version **1.0.3** (version code **10**) adds automatic GitHub update checking after sign-in, with a persistent 6-hour cooldown and silent failure when the check cannot reach GitHub; manual update checking is unchanged. Version **1.0.4** (version code **11**) adds swipe navigation between the five top-level tabs and a live class countdown card at the top of the weekly schedule. Future APK updates must use the same signing key so existing installations can update; keep a secure backup of that key and never commit it to this repository.
 
 ## Academic policy reference
 
