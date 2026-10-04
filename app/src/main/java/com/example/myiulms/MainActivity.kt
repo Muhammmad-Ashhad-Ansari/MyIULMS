@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -60,6 +62,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.myiulms.ui.dashboard.ScheduleFocus
+import com.example.myiulms.ui.dashboard.ScheduleFocusCard
+import com.example.myiulms.ui.dashboard.liveSecondsRemaining
+import com.example.myiulms.ui.dashboard.minuteOfDay
+import com.example.myiulms.ui.dashboard.normalizeDay
+import com.example.myiulms.ui.dashboard.resolveScheduleFocus
+import com.example.myiulms.ui.dashboard.todayAbbrev
 import com.example.myiulms.ui.policy.AcademicPolicyHost
 import com.example.myiulms.ui.policy.LocalAcademicPolicyState
 import com.example.myiulms.ui.policy.PolicyInfoButton
@@ -72,6 +81,7 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 
@@ -398,6 +408,9 @@ private fun LoginScreen(
     }
 }
 
+// Number of top-level tabs: Schedule, Attendance, Result, Transcript, Vouchers.
+private const val TAB_COUNT = 5
+
 @Composable
 private fun HomeScreen(
     vm: MainViewModel,
@@ -405,6 +418,23 @@ private fun HomeScreen(
     onThemeToggle: () -> Unit
 ) {
     var tab by remember { mutableIntStateOf(0) }
+    val pagerState = rememberPagerState(initialPage = 0) { TAB_COUNT }
+
+    // Pager -> tab. Only the settled page updates `tab`, so data loading and the
+    // existing `when (tab)` content keep working off a single source of truth.
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.currentPage }.collect { page ->
+            tab = page
+        }
+    }
+
+    // tab -> pager. Keeps NavigationBar taps in sync with a settled swipe. The
+    // guard prevents a feedback loop with the collector above.
+    LaunchedEffect(tab) {
+        if (pagerState.currentPage != tab) {
+            pagerState.animateScrollToPage(tab)
+        }
+    }
     val useCompactNavLabels = LocalDensity.current.fontScale >= 1.3f
     val showNavLabels = LocalDensity.current.fontScale < 1.4f
     val screenState = vm.screenLoadStates[tab] ?: ScreenLoadState()
@@ -489,8 +519,11 @@ private fun HomeScreen(
                     )
                 }
 
-                Box(modifier = Modifier.weight(1f)) {
-                    when (tab) {
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.weight(1f)
+                ) { page ->
+                    when (page) {
                         0 -> SchedulesScreen(
                             vm.examSchedule,
                             vm.weeklySchedule,
@@ -873,7 +906,13 @@ private fun SchedulesScreen(
 
         Box(modifier = Modifier.weight(1f)) {
             if (selectedSubTab == 0) {
-                WeeklyScheduleContent(weeklySchedule, screenState, onRetry, snackbarHostState)
+                WeeklyScheduleContent(
+                    schedule = weeklySchedule,
+                    screenState = screenState,
+                    onRetry = onRetry,
+                    snackbarHostState = snackbarHostState,
+                    enabled = selectedSubTab == 0
+                )
             } else {
                 ExamScheduleContent(examSchedule, screenState, onRetry)
             }
@@ -942,7 +981,8 @@ private fun WeeklyScheduleContent(
     schedule: WeeklySchedule?,
     screenState: ScreenLoadState,
     onRetry: () -> Unit,
-    snackbarHostState: SnackbarHostState
+    snackbarHostState: SnackbarHostState,
+    enabled: Boolean
 ) {
     if (schedule == null) {
         LoadStateContent("Loading weekly schedule…", screenState, onRetry)
@@ -952,7 +992,7 @@ private fun WeeklyScheduleContent(
     val dayOrder = listOf("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
     val groups = schedule.entries
         .sortedBy { scheduleStartMinutes(it.time) }
-        .groupBy { it.day.trim().uppercase().take(3).ifBlank { "OTHER" } }
+        .groupBy { normalizeDay(it.day) }
         .toSortedMap(
             compareBy(
                 { day -> dayOrder.indexOf(day).let { if (it < 0) dayOrder.size else it } },
@@ -1038,12 +1078,24 @@ private fun WeeklyScheduleContent(
             )
         }
 
+        val focusState = rememberScheduleFocusState(
+            schedule = schedule,
+            enabled = enabled
+        )
+
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = AppSpacing.Md),
             verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
         ) {
+            item(key = "class-dashboard") {
+                ScheduleFocusCard(
+                    focus = focusState.focus,
+                    secondsRemaining = focusState.secondsRemaining
+                )
+            }
+
             if (groups.isEmpty()) {
                 item {
                     EmptyState(
@@ -1075,6 +1127,66 @@ private fun WeeklyScheduleContent(
             }
         }
     }
+}
+
+/**
+ * Dashboard tick state.
+ *
+ * [focus] is recomputed on each tick; the ticker only runs while [enabled] and
+ * while a class is actually live, so there is no off-screen or idle work.
+ */
+private data class ScheduleFocusUiState(
+    val focus: ScheduleFocus,
+    val secondsRemaining: Int
+)
+
+@Composable
+private fun rememberScheduleFocusState(
+    schedule: WeeklySchedule?,
+    enabled: Boolean
+): ScheduleFocusUiState {
+    val entries = remember(schedule) { schedule?.entries.orEmpty() }
+
+    // 1 Hz heartbeat. Only advances while the weekly sub-tab is visible AND a
+    // class is live; otherwise the coroutine is not running at all.
+    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var isLive by remember { mutableStateOf(false) }
+
+    LaunchedEffect(entries, enabled) {
+        if (!enabled) return@LaunchedEffect
+        val initial = resolveScheduleFocus(
+            entries = entries,
+            today = todayAbbrev(),
+            minuteOfDay = minuteOfDay()
+        )
+        isLive = initial is ScheduleFocus.Live
+        nowMillis = System.currentTimeMillis()
+    }
+
+    LaunchedEffect(isLive, enabled) {
+        if (!enabled || !isLive) return@LaunchedEffect
+        while (enabled && isLive) {
+            delay(1000L)
+            nowMillis = System.currentTimeMillis()
+        }
+    }
+
+    val focus = remember(entries, nowMillis) {
+        resolveScheduleFocus(
+            entries = entries,
+            today = todayAbbrev(),
+            minuteOfDay = minuteOfDay(nowMillis)
+        )
+    }
+
+    val seconds = remember(focus, nowMillis) {
+        when (focus) {
+            is ScheduleFocus.Live -> liveSecondsRemaining(focus.entry, nowMillis)
+            else -> 0
+        }
+    }
+
+    return ScheduleFocusUiState(focus = focus, secondsRemaining = seconds)
 }
 
 @Composable
