@@ -127,6 +127,13 @@ fun App(
         LoginScreen(vm, darkTheme, onThemeToggle, onCheckForUpdates = vm::checkForUpdates)
     }
 
+    // Trigger automatic update check after user enters a real portal/session
+    LaunchedEffect(key1 = vm.loggedIn) {
+        if (vm.loggedIn) {
+            vm.checkAutomaticUpdate()
+        }
+    }
+
     vm.updateCheckState?.let { state ->
         UpdateCheckDialog(
             state = state,

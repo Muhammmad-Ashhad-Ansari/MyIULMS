@@ -1,6 +1,8 @@
 package com.example.myiulms
 
 import android.app.Application
+import android.content.Context
+import android.content.SharedPreferences
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -20,6 +22,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val client = IulmsClient()
     private val store = SecureStore(app)
     private var updateCheckJob: Job? = null
+    private val sharedPreferences: SharedPreferences
+        get() = getApplication<Application>().getSharedPreferences("myilms_update_check", Context.MODE_PRIVATE)
+
+    // 6-hour persistent cooldown for AUTOMATIC checks only.
+    private val AUTOMATIC_CHECK_COOLDOWN_MS = 6L * 60 * 60 * 1000
+    private val KEY_LAST_AUTOMATIC_CHECK = "last_automatic_check_ms"
+    private var automaticCheckClaimedInWindow = false
 
     var loggedIn by mutableStateOf(false)
         private set
@@ -49,7 +58,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var voucherActionError by mutableStateOf<String?>(null)
         private set
 
-    fun checkForUpdates() {
+    fun checkForUpdates() = runUpdateCheck(reportFailure = true)
+
+    private fun runUpdateCheck(reportFailure: Boolean) {
         if (updateCheckState == UpdateCheckState.Checking) return
 
         updateCheckState = UpdateCheckState.Checking
@@ -65,9 +76,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                UpdateCheckState.Failed(
-                    "Couldn't check for updates. Check your internet connection and try again."
-                )
+                // Automatic checks fail silently so the user is never interrupted.
+                // Manual checks keep the existing visible error.
+                if (reportFailure) {
+                    UpdateCheckState.Failed(
+                        "Couldn't check for updates. Check your internet connection and try again."
+                    )
+                } else {
+                    null
+                }
             }
         }
     }
@@ -76,6 +93,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         updateCheckJob?.cancel()
         updateCheckJob = null
         updateCheckState = null
+    }
+
+    fun checkAutomaticUpdate() {
+        // In-memory guard: stops repeated login-state changes / recomposition from
+        // issuing more than one automatic request within the same 6-hour window.
+        if (automaticCheckClaimedInWindow) return
+
+        // Persistent 6-hour cooldown is checked BEFORE any network request.
+        val now = System.currentTimeMillis()
+        val lastCheck = sharedPreferences.getLong(KEY_LAST_AUTOMATIC_CHECK, 0L)
+        if (lastCheck > 0L && now - lastCheck < AUTOMATIC_CHECK_COOLDOWN_MS) {
+            automaticCheckClaimedInWindow = true
+            return
+        }
+
+        // Cooldown expired: claim the window and persist the timestamp BEFORE the
+        // request, so an in-flight request (or process death) cannot cause a second
+        // automatic check on the next login.
+        automaticCheckClaimedInWindow = true
+        sharedPreferences.edit().putLong(KEY_LAST_AUTOMATIC_CHECK, now).commit()
+
+        runUpdateCheck(reportFailure = false)
     }
 
     private fun installedVersionName(): String {
