@@ -11,9 +11,18 @@ import androidx.activity.enableEdgeToEdge
 import androidx.core.content.edit
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -23,6 +32,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ExitToApp
 import androidx.compose.material.icons.automirrored.rounded.FactCheck
@@ -37,9 +47,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -483,16 +496,16 @@ private fun HomeScreen(
                 )
             },
             bottomBar = {
-                NavigationBar(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 1.dp
-                ) {
-                    NavItem(tab == 0, { tab = 0 }, Icons.Rounded.Event, if (useCompactNavLabels) "Sched." else "Schedule", showNavLabels)
-                    NavItem(tab == 1, { tab = 1 }, Icons.AutoMirrored.Rounded.FactCheck, if (useCompactNavLabels) "Attend" else "Attend.", showNavLabels)
-                    NavItem(tab == 2, { tab = 2 }, Icons.Rounded.Assessment, "Result", showNavLabels)
-                    NavItem(tab == 3, { tab = 3 }, Icons.Rounded.School, if (useCompactNavLabels) "Transcr." else "Transcript", showNavLabels)
-                    NavItem(tab == 4, { tab = 4 }, Icons.AutoMirrored.Rounded.ReceiptLong, if (useCompactNavLabels) "Voucher" else "Vouchers", showNavLabels)
-                }
+                // Floating capsule rather than a full-width NavigationBar.
+                // The slot accepts any composable, so Scaffold still reserves the
+                // capsule's measured height and the `padding` consumed below stays
+                // correct, which is what keeps the last list card clear of it.
+                FloatingNavCapsule(
+                    selectedIndex = tab,
+                    onSelect = { tab = it },
+                    useCompactLabels = useCompactNavLabels,
+                    showLabels = showNavLabels
+                )
             },
             snackbarHost = { SnackbarHost(snackbarHostState) },
             containerColor = MaterialTheme.colorScheme.background
@@ -553,31 +566,314 @@ private fun HomeScreen(
     }
 }
 
+/**
+ * Fixed height envelope for the capsule.
+ *
+ * Hard-bounded so a tab switch can never resize the Scaffold `bottomBar` slot.
+ * The inner row is padded to fit inside it rather than growing past it.
+ */
+private val CapsuleHeight = 64.dp
+
+/** Inset between the capsule and the left/right screen edges. */
+private val CapsuleSideInset = 18.dp
+
+/** Gap between the capsule and the bottom system edge. */
+private val CapsuleBottomInset = 12.dp
+
+/**
+ * Height of the gradient fade drawn above the capsule.
+ *
+ * Softens the hard cut where list content meets the bar.
+ */
+private val ScrollFadeHeight = 32.dp
+
+/** Horizontal padding inside the capsule, either side of the row. */
+private val CapsuleHorizontalPadding = 6.dp
+
+/** Gap between capsule edge and the outermost pill. */
+private val CapsuleItemSpacing = 2.dp
+
+/** Size of the selection pill behind the active destination. */
+private val NavPillHeight = 48.dp
+
+/** Height available to the capsule icon. */
+private val NavIconSize = 22.dp
+
+/** Gap between the pill icon and its label. */
+private val NavLabelGap = 6.dp
+
+/** Row weight of a collapsed, icon-only destination. */
+private const val NAV_WEIGHT_COLLAPSED = 1f
+
+/** Row weight of the expanded, icon-plus-label destination. */
+private const val NAV_WEIGHT_EXPANDED = 2.2f
+
+/** Translucent fill of the capsule. High enough to keep text legible. */
+private const val CAPSULE_FILL_ALPHA = 0.85f
+
+/** Rim alpha at the capsule's top edge, dark scheme. */
+private const val RIM_TOP_ALPHA_DARK = 0.35f
+
+/** Rim alpha at the capsule's bottom edge, dark scheme. */
+private const val RIM_BOTTOM_ALPHA_DARK = 0.05f
+
+/** Rim alpha at the capsule's top edge, light scheme. */
+private const val RIM_TOP_ALPHA_LIGHT = 0.18f
+
+/** Rim alpha at the capsule's bottom edge, light scheme. */
+private const val RIM_BOTTOM_ALPHA_LIGHT = 0.04f
+
+/** Width of the capsule rim stroke. */
+private val CapsuleRimWidth = 1.dp
+
+/**
+ * Bottom inset shared by every authenticated list.
+ *
+ * A tab switch must not change how much scrollable room a list has, so this is
+ * a plain function of the capsule geometry rather than a per-screen literal.
+ * The system navigation inset is read at composition time: `enableEdgeToEdge`
+ * is on, so the gesture bar is not already accounted for by the Scaffold.
+ */
+@Composable
+private fun listBottomInset(): androidx.compose.ui.unit.Dp {
+    val navigationBar = WindowInsets.navigationBars
+        .asPaddingValues()
+        .calculateBottomPadding()
+    return AppSpacing.Md + CapsuleHeight + ScrollFadeHeight + navigationBar
+}
+
+/**
+ * Destinations, in tab order. [NavDestinations.size] is what the pager and the
+ * `when (tab)` dispatch below rely on, so the two must stay in lockstep.
+ */
+private val NavDestinations = listOf(
+    NavDestination(Icons.Rounded.Event, "Schedule", "Sched.", "Schedule"),
+    NavDestination(Icons.AutoMirrored.Rounded.FactCheck, "Attend.", "Attend", "Attendance"),
+    NavDestination(Icons.Rounded.Assessment, "Result", "Result", "Results"),
+    NavDestination(Icons.Rounded.School, "Transcript", "Transcr.", "Transcript"),
+    NavDestination(Icons.AutoMirrored.Rounded.ReceiptLong, "Vouchers", "Voucher", "Vouchers")
+)
+
+private data class NavDestination(
+    val icon: ImageVector,
+    /** Full label, used at normal font scales. */
+    val label: String,
+    /** Abbreviated label, used once [useCompactLabels] kicks in. */
+    val compactLabel: String,
+    /**
+     * Spoken name. Never abbreviated: TalkBack reads a `contentDescription`
+     * verbatim, so "Transcr." would be announced literally.
+     */
+    val accessibilityLabel: String
+)
+
+/**
+ * Floating liquid-glass navigation capsule.
+ *
+ * Frosted appearance without a backdrop blur: a translucent surface fill, a
+ * hairline outline and a soft shadow. `Modifier.blur()` / `RenderEffect` are
+ * deliberately NOT used — they sample the node's own render layer, not the
+ * content behind it, so they would blur the icons rather than the list, and a
+ * genuine backdrop blur needs a separate offscreen pass over a region roughly
+ * 1080x288 px on every frame the list scrolls. On low-end GPUs that couples two
+ * independent invalidation sources on the same frame and drops frames. This is a
+ * single translucent fill plus a stroke: no per-frame allocation, no second
+ * render target.
+ *
+ * The navigation-bar inset is consumed here rather than at a hardcoded offset so
+ * the capsule clears the gesture handle on gesture-nav devices, where a literal
+ * bottom padding would overlap it.
+ */
+@Composable
+private fun FloatingNavCapsule(
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    useCompactLabels: Boolean,
+    showLabels: Boolean
+) {
+    val haptic = LocalHapticFeedback.current
+    val containerColor = MaterialTheme.colorScheme.surface.copy(alpha = CAPSULE_FILL_ALPHA)
+    // Dark mode needs a light rim: `surface` is already near-black there, so a
+    // dark stroke would be invisible. Light mode needs a dark rim for the same
+    // reason in reverse.
+    val isDark = isSystemInDarkTheme()
+    val rimBrush = Brush.verticalGradient(
+        if (isDark) {
+            listOf(
+                Color.White.copy(alpha = RIM_TOP_ALPHA_DARK),
+                Color.White.copy(alpha = RIM_BOTTOM_ALPHA_DARK)
+            )
+        } else {
+            val onSurface = MaterialTheme.colorScheme.onSurface
+            listOf(
+                onSurface.copy(alpha = RIM_TOP_ALPHA_LIGHT),
+                onSurface.copy(alpha = RIM_BOTTOM_ALPHA_LIGHT)
+            )
+        }
+    )
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // Scroll fade above the capsule: opaque theme background at the capsule's
+        // top edge fading to fully transparent upward, so list cards dissolve
+        // into the bar instead of being sliced by it. Drawn first so the capsule
+        // composites over it.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(ScrollFadeHeight)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.Transparent, MaterialTheme.colorScheme.background)
+                    )
+                )
+        )
+
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = CapsuleSideInset, end = CapsuleSideInset)
+                // Consume the gesture inset, then add it back as padding so the
+                // capsule body itself never sits under the home indicator.
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(bottom = CapsuleBottomInset)
+                .height(CapsuleHeight)
+                // Gradient rim. `Surface.border` only accepts a solid
+                // BorderStroke, so this is the Brush overload of Modifier.border,
+                // which takes the vertical gradient directly and handles the
+                // rounded outline geometry for us.
+                .border(CapsuleRimWidth, rimBrush, CircleShape),
+            shape = CircleShape,
+            color = containerColor,
+            // Explicit elevation: the translucent fill has no tonal tint to
+            // carry it, so the shadow is what separates it from the list.
+            // Zeroed in dark mode, where a black shadow on a near-black surface
+            // is invisible and only costs an extra shadow layer.
+            shadowElevation = if (isDark) 0.dp else 8.dp,
+            tonalElevation = 0.dp
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = CapsuleHorizontalPadding),
+                horizontalArrangement = Arrangement.spacedBy(CapsuleItemSpacing),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                NavDestinations.forEachIndexed { index, destination ->
+                    NavItem(
+                        selected = index == selectedIndex,
+                        onClick = {
+                            // Tick only on a real change; re-tapping the active
+                            // tab is a no-op and must not buzz.
+                            if (index != selectedIndex) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onSelect(index)
+                            }
+                        },
+                        icon = destination.icon,
+                        label = if (useCompactLabels) destination.compactLabel else destination.label,
+                        // Accessibility always uses the full destination name.
+                        // An abbreviated label like "Transcr." is announced
+                        // verbatim by TalkBack, which is not what it means.
+                        contentDescription = destination.accessibilityLabel,
+                        showLabel = showLabels
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One capsule destination.
+ *
+ * [Modifier.selectable] with [Role.Tab] replaces what `NavigationBarItem`
+ * provided: selection semantics, role, ripple, and keyboard focus. [stateDescription]
+ * and the selected-pill are both surfaced to the accessibility tree so TalkBack
+ * announces state identically to the M3 component it replaces.
+ */
 @Composable
 private fun RowScope.NavItem(
     selected: Boolean,
     onClick: () -> Unit,
     icon: ImageVector,
     label: String,
+    contentDescription: String,
     showLabel: Boolean
 ) {
-    NavigationBarItem(
-        selected = selected,
-        onClick = onClick,
-        icon = { Icon(icon, contentDescription = if (showLabel) null else label) },
-        label = if (showLabel) {
-            {
-            Text(
-                text = label,
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.labelMedium
-            )
-            }
-        } else null,
-        alwaysShowLabel = showLabel
+    // Row weight animates between collapsed and expanded. Weight is a
+    // parent-measured value, not a layout state, so this drives a re-measure of
+    // the row each frame rather than a GPU-only transform. That is acceptable
+    // here precisely because the capsule is a fixed 64.dp: five icon nodes, no
+    // content beneath it re-laying out, and the whole thing is above the
+    // Scaffold's content column.
+    val weight by animateFloatAsState(
+        targetValue = if (selected) NAV_WEIGHT_EXPANDED else NAV_WEIGHT_COLLAPSED,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessLow
+        ),
+        label = "navItemWeight"
     )
+
+    val pillColor = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent
+    val pillContentColor = MaterialTheme.colorScheme.onPrimary
+    val iconTint = if (selected) pillContentColor else MaterialTheme.colorScheme.onSurfaceVariant
+
+    Box(
+        modifier = Modifier
+            // Weight is applied here, inside RowScope, because it is a
+            // parent-measured value: `Row` reads it during measure and hands back
+            // the width budget. Animating it therefore re-measures the row each
+            // frame rather than moving a GPU layer.
+            .weight(weight)
+            .height(NavPillHeight)
+            .clip(CircleShape)
+            .background(pillColor)
+            .selectable(
+                selected = selected,
+                onClick = onClick,
+                role = Role.Tab
+            )
+            .semantics {
+                // The visible label is decorative here: it is inside an
+                // AnimatedVisibility whose node would otherwise be announced for
+                // the duration of the fade, and clearing it here guarantees
+                // TalkBack reads the description exactly once.
+                this.contentDescription = contentDescription
+                stateDescription = if (selected) "Selected" else "Not selected"
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(NavLabelGap)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(NavIconSize)
+            )
+
+            // Inside the pill, not beneath it: the expanded destination carries
+            // its icon and label together on the primary fill.
+            AnimatedVisibility(
+                visible = selected && showLabel,
+                enter = fadeIn(tween(120)),
+                exit = fadeOut(tween(90))
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = pillContentColor,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -771,7 +1067,12 @@ private fun ResultScreen(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = AppSpacing.Md),
+        contentPadding = PaddingValues(
+            start = ListGutter,
+            top = AppSpacing.Md,
+            end = ListGutter,
+            bottom = listBottomInset()
+        ),
         verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
     ) {
         item {
@@ -933,7 +1234,12 @@ private fun ExamScheduleContent(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = AppSpacing.Md),
+        contentPadding = PaddingValues(
+            start = ListGutter,
+            top = AppSpacing.Md,
+            end = ListGutter,
+            bottom = listBottomInset()
+        ),
         verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
     ) {
         item {
@@ -1007,77 +1313,6 @@ private fun WeeklyScheduleContent(
     val scope = rememberCoroutineScope()
 
     Column(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = AppSpacing.Md),
-            verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
-        ) {
-            ScreenHeading(
-                title = "Weekly class schedule",
-                subtitle = schedule.title.ifBlank { "Your semester classes" }
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                weekDays.forEach { day ->
-                    val hasClasses = day in classDays
-                    val isSelected = selectedDay == day
-                    val background = when {
-                        isSelected -> MaterialTheme.colorScheme.primary
-                        hasClasses -> MaterialTheme.colorScheme.primaryContainer
-                        else -> MaterialTheme.colorScheme.surfaceVariant
-                    }
-                    val foreground = when {
-                        isSelected -> MaterialTheme.colorScheme.onPrimary
-                        hasClasses -> MaterialTheme.colorScheme.onPrimaryContainer
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    }
-
-                    Surface(
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 48.dp)
-                            .semantics {
-                                contentDescription = "$day, ${if (hasClasses) "classes scheduled" else "no classes scheduled"}"
-                                stateDescription = if (isSelected) "Selected" else "Not selected"
-                            }
-                            .clickable(role = Role.Button) {
-                                if (hasClasses) {
-                                    selectedDay = day
-                                    val itemIndex = weekDays
-                                        .takeWhile { it != day }
-                                        .filter { it in classDays }
-                                        .sumOf { priorDay -> 1 + groups[priorDay].orEmpty().size }
-                                    scope.launch { listState.animateScrollToItem(itemIndex) }
-                                } else {
-                                    scope.launch {
-                                        snackbarHostState.showSnackbar("No classes scheduled on ${day.lowercase().replaceFirstChar(Char::uppercase)}")
-                                    }
-                                }
-                            },
-                        shape = RoundedCornerShape(AppRadius.Small),
-                        color = background,
-                        tonalElevation = if (hasClasses) 1.dp else 0.dp
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = day,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = foreground,
-                                fontWeight = if (hasClasses) FontWeight.SemiBold else FontWeight.Normal,
-                                maxLines = 1
-                            )
-                        }
-                    }
-                }
-            }
-            Text(
-                text = "${schedule.entries.size} classes this week",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
         val focusState = rememberScheduleFocusState(
             schedule = schedule,
             enabled = enabled
@@ -1086,10 +1321,51 @@ private fun WeeklyScheduleContent(
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = AppSpacing.Md),
+            contentPadding = PaddingValues(
+                start = ListGutter,
+                top = AppSpacing.Md,
+                end = ListGutter,
+                bottom = listBottomInset()
+            ),
             verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
         ) {
-            item(key = "class-dashboard") {
+            // The screen heading and the day chips now scroll WITH the list
+            // instead of sitting in static chrome above it, which is what hands
+            // their ~145.dp back to the entries on a swipe up.
+            item(key = ITEM_KEY_HEADING) {
+                ScreenHeading(
+                    title = "Weekly class schedule",
+                    subtitle = schedule.title.ifBlank { "Your semester classes" }
+                )
+            }
+
+            item(key = ITEM_KEY_DAY_CHIPS) {
+                WeeklyDayChipsRow(
+                    weekDays = weekDays,
+                    classDays = classDays,
+                    selectedDay = selectedDay,
+                    onSelectDay = { day ->
+                        selectedDay = day
+                        scope.launch {
+                            listState.animateScrollToItem(
+                                dayHeaderItemIndex(
+                                    day = day,
+                                    weekDays = weekDays,
+                                    classDays = classDays,
+                                    groups = groups
+                                )
+                            )
+                        }
+                    },
+                    onEmptyDay = { day ->
+                        scope.launch {
+                            snackbarHostState.showSnackbar("No classes scheduled on ${day.lowercase().replaceFirstChar(Char::uppercase)}")
+                        }
+                    }
+                )
+            }
+
+            item(key = ITEM_KEY_DASHBOARD) {
                 ScheduleFocusCard(
                     focus = focusState.focus,
                     secondsRemaining = focusState.secondsRemaining
@@ -1126,6 +1402,120 @@ private fun WeeklyScheduleContent(
                 }
             }
         }
+    }
+}
+
+/**
+ * Gutter for the weekly schedule list.
+ *
+ * Named because the heading, the day chips and the schedule cards below them
+ * must all resolve to the same horizontal axis. Three separate `18.dp` literals
+ * is exactly the kind of duplication that drifts.
+ */
+private val ListGutter = 18.dp
+
+/** Keys of the structural items that precede the day groups. */
+private const val ITEM_KEY_HEADING = "weekly-heading"
+private const val ITEM_KEY_DAY_CHIPS = "weekly-day-chips"
+private const val ITEM_KEY_DASHBOARD = "class-dashboard"
+
+/**
+ * Number of structural items the list emits before the first day group:
+ * heading, day chips, countdown card.
+ *
+ * [dayHeaderItemIndex] adds this to every target, so adding or removing a
+ * structural header item is a single-line change here rather than a silent
+ * off-by-N in the scroll arithmetic.
+ */
+private const val ITEMS_BEFORE_DAY_GROUPS = 3
+
+/**
+ * Day-of-week chips for the weekly schedule.
+ *
+ * Extracted from the list body so the `item {}` block stays declarative and the
+ * tap behaviour is unit-testable independently of layout.
+ */
+@Composable
+private fun WeeklyDayChipsRow(
+    weekDays: List<String>,
+    classDays: Set<String>,
+    selectedDay: String?,
+    onSelectDay: (String) -> Unit,
+    onEmptyDay: (String) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        weekDays.forEach { day ->
+            val hasClasses = day in classDays
+            val isSelected = selectedDay == day
+            val background = when {
+                isSelected -> MaterialTheme.colorScheme.primary
+                hasClasses -> MaterialTheme.colorScheme.primaryContainer
+                else -> MaterialTheme.colorScheme.surfaceVariant
+            }
+            val foreground = when {
+                isSelected -> MaterialTheme.colorScheme.onPrimary
+                hasClasses -> MaterialTheme.colorScheme.onPrimaryContainer
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
+
+            Surface(
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp)
+                    .semantics {
+                        contentDescription = "$day, ${if (hasClasses) "classes scheduled" else "no classes scheduled"}"
+                        stateDescription = if (isSelected) "Selected" else "Not selected"
+                    }
+                    .clickable(role = Role.Button) {
+                        if (hasClasses) onSelectDay(day) else onEmptyDay(day)
+                    },
+                shape = RoundedCornerShape(AppRadius.Small),
+                color = background,
+                tonalElevation = if (hasClasses) 1.dp else 0.dp
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = day,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = foreground,
+                        fontWeight = if (hasClasses) FontWeight.SemiBold else FontWeight.Normal,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * LazyList index of [day]'s sticky header.
+ *
+ * Walks the day groups in the same order the list emits them and counts what has
+ * already been placed:
+ *
+ *  - [ITEMS_BEFORE_DAY_GROUPS] structural items (heading, day chips, countdown
+ *    card) always precede the groups.
+ *  - For each earlier day that has classes, one sticky header plus that day's
+ *    entry cards.
+ *
+ * The earlier days are taken from [weekDays] rather than from [groups] so the
+ * weekday ordering cannot drift from the chip order the student is tapping. Days
+ * with no classes are skipped, matching the list, which emits no group for them.
+ */
+internal fun dayHeaderItemIndex(
+    day: String,
+    weekDays: List<String>,
+    classDays: Set<String>,
+    groups: Map<String, List<WeeklyScheduleEntry>>
+): Int {
+    val priorGroups = weekDays
+        .takeWhile { it != day }
+        .filter { it in classDays }
+    return ITEMS_BEFORE_DAY_GROUPS + priorGroups.sumOf { priorDay ->
+        1 + groups[priorDay].orEmpty().size
     }
 }
 
@@ -1358,7 +1748,12 @@ private fun AttendanceScreen(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = AppSpacing.Md),
+        contentPadding = PaddingValues(
+            start = ListGutter,
+            top = AppSpacing.Md,
+            end = ListGutter,
+            bottom = listBottomInset()
+        ),
         verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
     ) {
         item {
@@ -1647,7 +2042,12 @@ private fun VoucherScreen(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = AppSpacing.Md),
+        contentPadding = PaddingValues(
+            start = ListGutter,
+            top = AppSpacing.Md,
+            end = ListGutter,
+            bottom = listBottomInset()
+        ),
         verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
     ) {
         item {
@@ -1799,7 +2199,12 @@ private fun TranscriptScreen(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = AppSpacing.Md),
+        contentPadding = PaddingValues(
+            start = ListGutter,
+            top = AppSpacing.Md,
+            end = ListGutter,
+            bottom = listBottomInset()
+        ),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {

@@ -2,8 +2,11 @@ package com.example.myiulms.ui.dashboard
 
 import com.example.myiulms.WeeklyScheduleEntry
 import java.time.DayOfWeek
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
  * Pure-Kotlin schedule interval logic for the upcoming/live class dashboard card.
@@ -29,8 +32,23 @@ private val timeTokenPattern = Regex(
 /** Upper bound mirroring the existing duration guard (12 hours). */
 private const val MAX_DURATION_MINUTES = 12 * 60
 
+/** Minutes in an hour: the boundary between coarse and ticking ticker formats. */
+private const val MINUTES_PER_HOUR = 60
+
+/** Minutes in a day, used to reduce an out-of-range minute-of-day safely. */
+private const val MINUTES_PER_DAY = 24 * 60
+
 /** Sentinel shown when no trustworthy interval can be derived. */
 const val NO_COUNTDOWN = "—"
+
+/**
+ * Separator for the dense metadata line. A bullet, not a comma, so the room
+ * vector and the wall-clock time read as two distinct facts.
+ */
+private const val META_SEPARATOR = " \u2022 "
+
+private const val ENDS_AT_PREFIX = "Ends at "
+private const val STARTS_AT_PREFIX = "Starts at "
 
 /**
  * A parsed class interval in minutes-of-day.
@@ -198,12 +216,21 @@ sealed interface ScheduleFocus {
     data class Live(
         val entry: WeeklyScheduleEntry,
         val remainingMinutes: Int,
-        val totalMinutes: Int
+        val totalMinutes: Int,
+        /**
+         * Wall-clock end of the class as a minute-of-day. Carried on the focus
+         * state (rather than re-parsed in the composable) so the metadata row
+         * costs nothing per tick and cannot disagree with the countdown.
+         * May exceed 1439 for an overnight class.
+         */
+        val endMinuteOfDay: Int
     ) : ScheduleFocus
 
     data class Upcoming(
         val entry: WeeklyScheduleEntry,
-        val startsInMinutes: Int
+        val startsInMinutes: Int,
+        /** Wall-clock start of the class as a minute-of-day. */
+        val startMinuteOfDay: Int
     ) : ScheduleFocus
 
     /** No entries exist for the active day. */
@@ -248,7 +275,7 @@ fun resolveScheduleFocus(
     }?.let { (entry, interval) ->
         val i = interval!!
         val remaining = (i.endMinuteOfDay - minuteOfDay).coerceIn(0, i.durationMinutes)
-        return ScheduleFocus.Live(entry, remaining, i.durationMinutes)
+        return ScheduleFocus.Live(entry, remaining, i.durationMinutes, i.endMinuteOfDay)
     }
 
     // Otherwise the next class that has not started yet.
@@ -257,7 +284,7 @@ fun resolveScheduleFocus(
     }?.let { (entry, interval) ->
         val i = interval!!
         val lead = (i.startMinuteOfDay - minuteOfDay).coerceAtLeast(0)
-        return ScheduleFocus.Upcoming(entry, lead)
+        return ScheduleFocus.Upcoming(entry, lead, i.startMinuteOfDay)
     }
 
     // Today had real classes and the last one has ended.
@@ -265,26 +292,110 @@ fun resolveScheduleFocus(
 }
 
 /**
- * Formats a live countdown as MM:SS, clamped to [totalMinutes].
+ * Formats the live countdown for the fixed-width ticker, clamped to
+ * [totalMinutes].
  *
- * [secondsRemaining] is the second-resolution value so the string can tick at
- * 1 Hz; it is clamped against the interval length, which makes a device clock
- * jump produce "00:00" rather than a negative or absurd string.
+ * Two regimes, chosen by how much time is actually LEFT rather than how long
+ * the class is. Keying off the remaining value (not the class duration) is what
+ * keeps the ticking affordance alive for the whole hour: a 3-hour lecture still
+ * counts down at minute resolution, then hands over to a 1 Hz second-resolution
+ * readout for its final hour instead of freezing on "0h 0m".
+ *
+ *  - an hour or less left -> "59m 42s" (ticking, second resolution)
+ *  - more than an hour    -> "8h 13m"  (coarse, minute resolution)
+ *
+ * Neither branch can exceed 7 glyphs, which is what keeps the string inside
+ * the fixed ticker frame without ever wrapping to a second line.
+ *
+ * Clamping against the interval length is the device-clock-skew defence: a
+ * manual clock jump yields "0m 00s" rather than a negative or absurd string.
+ * [Locale.ROOT] keeps the digits ASCII; a locale default would emit wider
+ * Arabic-Indic digits under "ar" and re-introduce the overflow this guards.
  */
 fun formatRemainingClock(secondsRemaining: Int, totalMinutes: Int): String {
     val maxSeconds = (totalMinutes.coerceAtLeast(0)) * 60
     val safe = secondsRemaining.coerceIn(0, maxSeconds)
     val minutes = safe / 60
     val seconds = safe % 60
-    return "%d:%02d".format(minutes, seconds)
+    // ">=", not ">": exactly one hour remaining renders as "1h 0m" so the
+    // ticker never shows the odd "60m 00s" at the top of its range.
+    return if (minutes >= MINUTES_PER_HOUR) {
+        "%dh %dm".format(Locale.ROOT, minutes / MINUTES_PER_HOUR, minutes % MINUTES_PER_HOUR)
+    } else {
+        "%dm %02ds".format(Locale.ROOT, minutes, seconds)
+    }
 }
 
-/** Formats lead time as "In 25 mins" / "In 1 min" / "Starting now". */
+/**
+ * Formats lead time for the ticker, using the same width budget as
+ * [formatRemainingClock].
+ *
+ * The old "In 719 mins" was the widest string the ticker ever had to draw and
+ * was the actual overflow source; it is now "11h 59m". Short leads keep the
+ * wordier phrasing because there is room for it.
+ */
 fun formatStartsIn(startsInMinutes: Int): String {
     val safe = startsInMinutes.coerceAtLeast(0)
-    return when (safe) {
-        0 -> "Starting now"
-        1 -> "In 1 min"
+    return when {
+        safe == 0 -> "Starting now"
+        safe > MINUTES_PER_HOUR ->
+            "%dh %dm".format(Locale.ROOT, safe / MINUTES_PER_HOUR, safe % MINUTES_PER_HOUR)
+        safe == 1 -> "In 1 min"
         else -> "In $safe mins"
     }
+}
+
+/**
+ * 12-hour wall clock for a minute-of-day, e.g. 860 -> "2:20 PM".
+ *
+ * [minuteOfDay] is reduced modulo a day first because an overnight class ends
+ * at a value past 1439 (a 22:00-02:00 class ends at 1560) and [LocalTime]
+ * rejects an hour above 23. The formatter is pinned to [Locale.ENGLISH] so the
+ * meridiem renders as "PM" rather than the lowercase "pm" that several locales
+ * would otherwise produce.
+ */
+fun formatWallClock(minuteOfDay: Int): String {
+    val normalized = ((minuteOfDay % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY
+    return LocalTime.of(normalized / MINUTES_PER_HOUR, normalized % MINUTES_PER_HOUR)
+        .format(WALL_CLOCK_FORMATTER)
+}
+
+/** Built once: constructing a [DateTimeFormatter] per tick is not free. */
+private val WALL_CLOCK_FORMATTER: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH)
+
+/**
+ * Normalises a portal room value into a "Room X" label.
+ *
+ * Strips a leading "Room" so a location that already carries the word cannot
+ * render as "Room Room E-806". Returns null for a blank value so the caller
+ * can reserve the metadata slot instead of drawing an empty line.
+ */
+fun formatRoomLabel(location: String?): String? {
+    val trimmed = location?.trim().orEmpty()
+    if (trimmed.isBlank()) return null
+    // Accepts both "E-806" and "Room E-806"; a bare "Room" normalizes to
+    // nothing, which the caller treats as absent rather than as a label.
+    val stripped = trimmed
+        .replaceFirst(Regex("(?i)^room\\b"), "")
+        .trim()
+    if (stripped.isBlank()) return null
+    return "Room $stripped"
+}
+
+/**
+ * Dense metadata line for the live tier: "Room E-806 • Ends at 2:20 PM".
+ *
+ * Returns null when there is no usable room, so the metadata row degrades to a
+ * reserved spacer and the card height never changes.
+ */
+fun formatLiveMetadata(location: String?, endMinuteOfDay: Int): String? {
+    val room = formatRoomLabel(location) ?: return null
+    return "$room$META_SEPARATOR$ENDS_AT_PREFIX${formatWallClock(endMinuteOfDay)}"
+}
+
+/** Dense metadata line for the standby tier: "Room E-803 • Starts at 2:30 PM". */
+fun formatUpcomingMetadata(location: String?, startMinuteOfDay: Int): String? {
+    val room = formatRoomLabel(location) ?: return null
+    return "$room$META_SEPARATOR$STARTS_AT_PREFIX${formatWallClock(startMinuteOfDay)}"
 }
