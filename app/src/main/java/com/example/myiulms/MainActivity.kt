@@ -1776,7 +1776,12 @@ private fun WeeklyScheduleCard(entry: WeeklyScheduleEntry) {
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            // AppSpacing.Md, not the bare 8.dp this was: the time row, the
+            // title and the Room/Faculty row are three dense text blocks, and at
+            // 8.dp they read as one undivided mass. 12.dp separates them without
+            // altering any block's own leading. The token also replaces a raw
+            // literal that no other spacing in this card used.
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
         ) {
             if (entry.time.isNotBlank()) {
                 Row(
@@ -1813,15 +1818,47 @@ private fun WeeklyScheduleCard(entry: WeeklyScheduleEntry) {
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
-            if (entry.location.isNotBlank()) InfoLine(Icons.Rounded.LocationOn, "Room", entry.location)
-            if (entry.faculty.isNotBlank()) InfoLine(Icons.Rounded.Person, "Faculty", entry.faculty)
-            if (entry.courseCode.isNotBlank() || entry.edpCode.isNotBlank()) {
-                Text(
-                    text = listOf(entry.courseCode, entry.edpCode).filter(String::isNotBlank).joinToString(" · "),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            // Room and Faculty share one line below the title instead of
+            // stacking as two full-width rows.
+            //
+            // The split is asymmetric on purpose. Room is a short, predictable
+            // token ("E-806", "Lab 3") so it is measured at its intrinsic width
+            // and takes only what it needs. Faculty is the variable-length field
+            // -- "Dr. Muhammad Rizwan Munir" is three times the width of a room
+            // number -- so it is the weighted child and absorbs ALL of the
+            // leftover space. Splitting the row 50/50 instead would cap faculty
+            // at half the card and truncate names that would otherwise fit.
+            //
+            // Both blocks are still width-bounded: Room by the row's own max
+            // constraint (clamped by wrapContentWidth), Faculty by its weight.
+            // Either way the value Text ellipsizes instead of wrapping, so a
+            // long name cannot grow the card.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.Lg)
+            ) {
+                if (entry.location.isNotBlank()) {
+                    InfoLineCompact(
+                        icon = Icons.Rounded.LocationOn,
+                        label = "Room",
+                        value = entry.location,
+                        modifier = Modifier.wrapContentWidth()
+                    )
+                }
+                if (entry.faculty.isNotBlank()) {
+                    InfoLineCompact(
+                        icon = Icons.Rounded.Person,
+                        label = "Faculty",
+                        value = entry.faculty,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
+            // The course code / EDP code line used to sit here. Removed: both
+            // fields are still parsed into WeeklyScheduleEntry and still feed
+            // entryKey, so nothing downstream loses them -- they are simply no
+            // longer printed on the collapsed card, which is where the vertical
+            // saving comes from.
         }
     }
 }
@@ -2910,6 +2947,68 @@ private fun InfoLine(icon: ImageVector, label: String, value: String) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(value, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+/**
+ * Single-line sibling of [InfoLine] for a constrained-width slot.
+ *
+ * Deliberately a SEPARATE composable rather than a defaulted parameter on
+ * [InfoLine]: the shared one is the layout of record for the attendance,
+ * transcript and voucher cards, and its unbounded vertical growth is correct
+ * there. Changing it in place would restyle four other screens.
+ *
+ * Two differences make this safe to place side-by-side:
+ *  - The value [Text] is capped at one line with an ellipsis. An unbounded
+ *    `Text` wraps, which silently grows the card instead of truncating a long
+ *    faculty name.
+ *  - Neither the [Row] nor the inner [Column] forces its own width. Both take
+ *    the incoming constraint as-is, so the caller decides the allocation
+ *    entirely: `Modifier.weight(1f)` to absorb the leftover space, or
+ *    `Modifier.wrapContentWidth()` to shrink to intrinsic content.
+ *
+ * Why neither forces a width: an internal `fillMaxWidth()` would override a
+ * caller's `wrapContentWidth()` and make the block swallow the whole row, and an
+ * internal `Column(weight(1f))` would do the same, because a weighted child with
+ * no weighted sibling receives all remaining space. Truncation does not depend
+ * on either: a `Text` capped at one line ellipsizes against whatever `maxWidth`
+ * the Row's constraint imposes, which the caller's weight already bounds.
+ */
+@Composable
+private fun InfoLineCompact(
+    icon: ImageVector,
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            icon,
+            null,
+            modifier = Modifier.size(18.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        // AppSpacing.Md, not the raw 10.dp this was. At 10.dp the glyph sat
+        // closer to its own label than the two blocks sit to each other, so the
+        // icons read as crowded even when the inter-block gap was correct.
+        // Tokenised so it no longer drifts from the spacing scale.
+        Spacer(Modifier.width(AppSpacing.Md))
+        Column {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                value,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
