@@ -961,18 +961,34 @@ private fun PortalTopBar(
                             onCheckForUpdates()
                         }
                     )
+                    PolicyOverflowItem(onDismissMenu = { menuExpanded = false })
+
+                    // Last on purpose. Sign out is the only destructive action in
+                    // this menu, so it sits below the two informational entries
+                    // rather than between them — harder to hit by accident and it
+                    // reads as the menu's terminal action.
+                    //
+                    // Both `textColor` AND `leadingIconColor` are overridden.
+                    // Setting only the text leaves the exit glyph on the default
+                    // `onSurface` tint, which reads as a styling oversight.
                     DropdownMenuItem(
                         text = { Text("Sign out") },
                         leadingIcon = {
                             Icon(Icons.AutoMirrored.Rounded.ExitToApp, contentDescription = null)
                         },
+                        // `MenuDefaults.itemColors`, not a `DropdownMenuItemDefaults`:
+                        // in Material3 1.4.0 that object does not exist. The
+                        // factory lives on `MenuDefaults` and returns
+                        // `MenuItemColors`.
+                        colors = MenuDefaults.itemColors(
+                            textColor = MaterialTheme.colorScheme.error,
+                            leadingIconColor = MaterialTheme.colorScheme.error
+                        ),
                         onClick = {
                             menuExpanded = false
                             onLogout()
                         }
                     )
-
-                    PolicyOverflowItem(onDismissMenu = { menuExpanded = false })
                 }
             }
         },
