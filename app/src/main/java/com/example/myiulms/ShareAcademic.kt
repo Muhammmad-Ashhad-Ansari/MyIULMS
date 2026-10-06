@@ -7,17 +7,33 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import androidx.core.content.FileProvider
+import com.example.myiulms.ui.dashboard.formatWallClock
+import com.example.myiulms.ui.dashboard.groupScheduleByDay
+import com.example.myiulms.ui.dashboard.normalizeDay
+import com.example.myiulms.ui.dashboard.parseScheduleInterval
 import java.io.File
 import java.io.FileOutputStream
-import java.text.SimpleDateFormat
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private const val SHARE_WIDTH = 1400
+
+/**
+ * Footer date pattern, pinned to [Locale.ENGLISH].
+ *
+ * Replaces a per-call `SimpleDateFormat(...)`: constructing a formatter is not
+ * free, and this one runs on every share.
+ */
+private val ShareFooterDateFormatter: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH)
 private const val MARGIN = 84f
 private const val ROW_HEIGHT = 86f
 
-fun shareResultAsPng(context: Context, studentName: String?, result: ExamResult) {
+suspend fun shareResultAsPng(context: Context, studentName: String?, result: ExamResult) {
     val subtitle = result.title
         .replace("EXAM RESULT", "", ignoreCase = true)
         .trim(' ', '(', ')', '-')
@@ -46,7 +62,7 @@ fun shareResultAsPng(context: Context, studentName: String?, result: ExamResult)
     )
 }
 
-fun shareTranscriptAsPng(context: Context, studentName: String?, transcript: Transcript) {
+suspend fun shareTranscriptAsPng(context: Context, studentName: String?, transcript: Transcript) {
     val completed = completedHours(transcript.courses)
     val rows = transcript.courses.map {
         listOf(
@@ -71,7 +87,92 @@ fun shareTranscriptAsPng(context: Context, studentName: String?, transcript: Tra
     )
 }
 
-private fun shareAcademicTable(
+/**
+ * Weekly class schedule as a shareable image.
+ *
+ * Mirrors [shareResultAsPng] / [shareTranscriptAsPng] exactly: the same 1400px
+ * canvas pipeline, the same brand palette, the same footer, the same
+ * `FileProvider` + `ACTION_SEND` handoff. Only the row model differs.
+ *
+ * The rows are grouped by [groupScheduleByDay] rather than re-sorted here, so
+ * the exported image and the on-screen list always present the week in the same
+ * order.
+ *
+ * @param now injected so the footer date is deterministic in tests.
+ */
+suspend fun shareScheduleAsPng(
+    context: Context,
+    studentName: String?,
+    schedule: WeeklySchedule?,
+    now: LocalDate = LocalDate.now()
+) {
+    val groups = groupScheduleByDay(schedule?.entries.orEmpty())
+    val classCount = groups.values.sumOf { it.size }
+
+    val rows = groups.flatMap { (day, entries) ->
+        entries.map { entry -> scheduleRow(day, entry) }
+    }
+
+    shareAcademicTable(
+        context = context,
+        filePrefix = "MyIULMS_Schedule",
+        title = "Weekly Class Schedule",
+        subtitle = if (groups.isEmpty()) {
+            "No classes reported for this week"
+        } else {
+            "$classCount class${if (classCount == 1) "" else "es"} across " +
+                "${groups.size} day${if (groups.size == 1) "" else "s"}"
+        },
+        studentName = studentName,
+        metricLabel = "This week",
+        metricValue = if (classCount == 0) "—" else "$classCount",
+        headers = listOf("Day", "Time", "Course", "Room"),
+        rows = rows,
+        columnWidths = listOf(.12f, .17f, .45f, .13f),
+        generatedOn = now
+    )
+}
+
+/**
+ * One schedule row as the four display strings the table renderer draws.
+ *
+ * A row is three visual bands rather than four columns: the time and the course
+ * title each get their own line, so the course column carries the code and the
+ * faculty beneath the title.
+ */
+private fun scheduleRow(day: String, entry: WeeklyScheduleEntry): List<String> {
+    val title = entry.courseTitle.trim().ifBlank { "Class" }
+    val interval = parseScheduleInterval(entry.time)
+    val time = if (interval == null) {
+        // "TBA" or a single token. The raw portal text still tells the student
+        // something; an em dash would tell them nothing.
+        entry.time.trim().ifBlank { "TBA" }
+    } else {
+        "${formatWallClock(interval.startMinuteOfDay)} - " +
+            formatWallClock(interval.endMinuteOfDay)
+    }
+
+    val course = buildString {
+        append(title)
+        // Code and faculty share the course cell; the code is the identifier a
+        // classmate would search on, the faculty is the tiebreaker when two
+        // sections of the same course meet at once.
+        val code = entry.courseCode.trim()
+        val faculty = entry.faculty.trim()
+        if (code.isNotBlank()) {
+            append("  ·  ")
+            append(code)
+        }
+        if (faculty.isNotBlank()) {
+            append("  ·  ")
+            append(formatShareName(faculty))
+        }
+    }
+
+    return listOf(day, time, course, entry.location.trim())
+}
+
+private suspend fun shareAcademicTable(
     context: Context,
     filePrefix: String,
     title: String,
@@ -81,7 +182,8 @@ private fun shareAcademicTable(
     metricValue: String,
     headers: List<String>,
     rows: List<List<String>>,
-    columnWidths: List<Float>
+    columnWidths: List<Float>,
+    generatedOn: LocalDate? = null
 ) {
     val headerHeight = 470
     val footerHeight = 170
@@ -90,10 +192,6 @@ private fun shareAcademicTable(
         .toInt()
         .coerceAtLeast(900)
 
-    val bitmap = Bitmap.createBitmap(SHARE_WIDTH, height, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
-    canvas.drawColor(Color.rgb(248, 250, 253))
-
     val primary = Color.rgb(0, 91, 149)
     val navy = Color.rgb(22, 48, 91)
     val text = Color.rgb(28, 38, 49)
@@ -101,15 +199,25 @@ private fun shareAcademicTable(
     val border = Color.rgb(220, 228, 236)
     val surface = Color.WHITE
 
-    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    // Allocation and every draw call happen off the main thread. A 1400 x ~1900
+    // ARGB_8888 bitmap is ~10MB, and PNG compression at quality 100 is
+    // CPU-bound: doing this inline drops frames on a mid-range device and risks
+    // an ANR on a long week. Only the two calls that must touch the main thread
+    // -- cache-dir file IO and startActivity -- are hoisted back out below.
+    val bitmap = withContext(Dispatchers.Default) {
+        val created = Bitmap.createBitmap(SHARE_WIDTH, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(created)
+        canvas.drawColor(Color.rgb(248, 250, 253))
 
-    fun drawText(value: String, x: Float, y: Float, size: Float, color: Int, bold: Boolean = false) {
-        paint.textSize = size
-        paint.color = color
-        paint.typeface = if (bold) android.graphics.Typeface.DEFAULT_BOLD
-        else android.graphics.Typeface.DEFAULT
-        canvas.drawText(value, x, y, paint)
-    }
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        fun drawText(value: String, x: Float, y: Float, size: Float, color: Int, bold: Boolean = false) {
+            paint.textSize = size
+            paint.color = color
+            paint.typeface = if (bold) android.graphics.Typeface.DEFAULT_BOLD
+            else android.graphics.Typeface.DEFAULT
+            canvas.drawText(value, x, y, paint)
+        }
 
     drawText("MyIULMS", MARGIN, 112f, 54f, primary, true)
     drawText("Unofficial student client for IULMS", MARGIN, 158f, 26f, muted)
@@ -188,25 +296,33 @@ private fun shareAcademicTable(
     }
 
     val footerY = height - 90f
-    drawText(
-        "Generated by MyIULMS • Unofficial • ${SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH).format(Date())}",
-        MARGIN,
-        footerY,
-        23f,
-        muted
-    )
-    drawText(
-        "Academic data is read from the student's authenticated IULMS session.",
-        MARGIN,
-        footerY + 38f,
-        21f,
-        muted
-    )
+        val footerDate = generatedOn ?: LocalDate.now()
+        drawText(
+            "Generated by MyIULMS • Unofficial • ${footerDate.format(ShareFooterDateFormatter)}",
+            MARGIN,
+            footerY,
+            23f,
+            muted
+        )
+        drawText(
+            "Academic data is read from the student's authenticated IULMS session.",
+            MARGIN,
+            footerY + 38f,
+            21f,
+            muted
+        )
+
+        created
+    }
 
     val shareDir = File(context.cacheDir, "shares").apply { mkdirs() }
     val file = File(shareDir, "${filePrefix}_${System.currentTimeMillis()}.png")
-    FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-    bitmap.recycle()
+    // Compression is the expensive half, so it goes back to the background
+    // dispatcher before touching the cache directory.
+    withContext(Dispatchers.Default) {
+        FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        bitmap.recycle()
+    }
 
     val uri = FileProvider.getUriForFile(
         context,

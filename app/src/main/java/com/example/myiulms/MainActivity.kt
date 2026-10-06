@@ -62,7 +62,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
+
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -78,6 +78,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.myiulms.ui.dashboard.ScheduleFocus
 import com.example.myiulms.ui.dashboard.ScheduleFocusCard
+import com.example.myiulms.ui.dashboard.groupScheduleByDay
 import com.example.myiulms.ui.dashboard.liveSecondsRemaining
 import com.example.myiulms.ui.dashboard.minuteOfDay
 import com.example.myiulms.ui.dashboard.normalizeDay
@@ -561,7 +562,8 @@ private fun HomeScreen(
                             vm.weeklySchedule,
                             screenState,
                             onRetry = { vm.refresh(tab) },
-                            snackbarHostState = snackbarHostState
+                            snackbarHostState = snackbarHostState,
+                            studentName = vm.studentName
                         )
                         1 -> AttendanceScreen(vm.attendance, screenState, onRetry = { vm.refresh(tab) })
                         2 -> ResultScreen(vm.examResult, vm.studentName, screenState, onRetry = { vm.refresh(tab) })
@@ -1095,6 +1097,7 @@ private fun ResultScreen(
     }
 
     val context = LocalContext.current
+    val shareScope = rememberCoroutineScope()
     val totals = result.rows.mapNotNull { it.total.toDoubleOrNull() }
     val average = if (totals.isNotEmpty()) totals.average() else null
     val highest = totals.maxOrNull()
@@ -1122,10 +1125,12 @@ private fun ResultScreen(
                         PolicyInfoButton()
                         IconButton(
                             onClick = {
-                                runCatching { shareResultAsPng(context, studentName, result) }
-                                    .onFailure {
-                                        Toast.makeText(context, "Could not share result.", Toast.LENGTH_SHORT).show()
-                                    }
+                                shareScope.launch {
+                                    runCatching { shareResultAsPng(context, studentName, result) }
+                                        .onFailure {
+                                            Toast.makeText(context, "Could not share result.", Toast.LENGTH_SHORT).show()
+                                        }
+                                }
                             }
                         ) {
                             Icon(Icons.Rounded.Share, "Share result")
@@ -1214,7 +1219,8 @@ private fun SchedulesScreen(
     weeklySchedule: WeeklySchedule?,
     screenState: ScreenLoadState,
     onRetry: () -> Unit,
-    snackbarHostState: SnackbarHostState
+    snackbarHostState: SnackbarHostState,
+    studentName: String?
 ) {
     var selectedSubTab by remember { mutableIntStateOf(0) }
 
@@ -1247,7 +1253,8 @@ private fun SchedulesScreen(
                     screenState = screenState,
                     onRetry = onRetry,
                     snackbarHostState = snackbarHostState,
-                    enabled = selectedSubTab == 0
+                    enabled = selectedSubTab == 0,
+                    studentName = studentName
                 )
             } else {
                 ExamScheduleContent(examSchedule, screenState, onRetry)
@@ -1323,23 +1330,17 @@ private fun WeeklyScheduleContent(
     screenState: ScreenLoadState,
     onRetry: () -> Unit,
     snackbarHostState: SnackbarHostState,
-    enabled: Boolean
+    enabled: Boolean,
+    studentName: String?
 ) {
     if (schedule == null) {
         LoadStateContent("Loading weekly schedule…", screenState, onRetry)
         return
     }
 
-    val dayOrder = listOf("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
-    val groups = schedule.entries
-        .sortedBy { scheduleStartMinutes(it.time) }
-        .groupBy { normalizeDay(it.day) }
-        .toSortedMap(
-            compareBy(
-                { day -> dayOrder.indexOf(day).let { if (it < 0) dayOrder.size else it } },
-                { day -> day }
-            )
-        )
+    // Shared with the share compiler via groupScheduleByDay so the text a
+    // student shares cannot disagree with the list they are looking at.
+    val groups = groupScheduleByDay(schedule.entries)
 
     val weekDays = listOf("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
     val classDays = groups.keys
@@ -1347,22 +1348,16 @@ private fun WeeklyScheduleContent(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
-    /**
-     * Measured height of the pinned chip row, in pixels.
-     *
-     * Not a constant: the chips are `heightIn(min = 48.dp)` and grow with the
-     * font scale, so a hardcoded 64.dp silently under-scrolls on large text.
-     * Seeded with the `48 + 12` arithmetic below so the very first tap (which
-     * can land before the first `onSizeChanged`) still lands in the right place;
-     * the measured value takes over from the second frame on.
-     */
-    val density = LocalDensity.current
-    var chipRowHeightPx by remember {
-        mutableIntStateOf(with(density) { (48.dp + ChipRowBottomPadding).roundToPx() })
-    }
-
     /** Suppresses the scroll-driven highlight while a chip tap is animating. */
     var suppressHighlight by remember { mutableStateOf(false) }
+
+    // Composition-scoped Activity context for the share intent. Never hoisted
+    // into the ViewModel: that would outlive the Activity and leak it.
+    val shareContext = LocalContext.current
+
+    // Ties the share job to this screen's lifecycle, so it is cancelled if the
+    // student navigates away before the bitmap is finished.
+    val shareScope = rememberCoroutineScope()
 
     Column(modifier = Modifier.fillMaxSize()) {
         val focusState = rememberScheduleFocusState(
@@ -1372,81 +1367,133 @@ private fun WeeklyScheduleContent(
                 .any { it.key == ITEM_KEY_DASHBOARD }
         )
 
+        /**
+         * Static day-chip bar. A SIBLING of the list, not an item in it.
+         *
+         * This is what lets both the chips and the day labels be permanently
+         * visible. A `LazyColumn` sticky header is unpushed only by the next
+         * sticky header, so two pinned rows inside one list is a structural
+         * conflict: whichever comes second evicts the first. Lifting the chips
+         * out of the list removes them from the pin hierarchy entirely — they
+         * never scroll, never evict, never need an offset.
+         *
+         * Consequence: the list lost one item, so [ITEMS_BEFORE_DAY_GROUPS] is
+         * 2, not 3. The chips bar is no longer addressable as an index.
+         */
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            // Bottom cushion equals the list's `spacedBy(AppSpacing.Md)` gap.
+            // `Arrangement` space is layout space that this bar does NOT cover,
+            // so anything smaller would let the first card slide under the seam.
+            Column(modifier = Modifier.padding(bottom = AppSpacing.Md)) {
+                WeeklyDayChipsRow(
+                    weekDays = weekDays,
+                    classDays = classDays,
+                    selectedDay = selectedDay,
+                    onSelectDay = { day ->
+                        selectedDay = day
+                        suppressHighlight = true
+                        scope.launch {
+                            try {
+                                listState.animateScrollToItem(
+                                    index = dayGroupLabelItemIndex(
+                                        day = day,
+                                        weekDays = weekDays,
+                                        classDays = classDays,
+                                        groups = groups
+                                    ),
+                                    // 0, not a negative offset. The chips are no
+                                    // longer a list item, so the list's own
+                                    // content edge now sits flush beneath the
+                                    // static bar. Offsetting again would push the
+                                    // target day label a full band too low and
+                                    // leave a gap under the chips.
+                                    scrollOffset = 0
+                                )
+                            } finally {
+                                suppressHighlight = false
+                            }
+                        }
+                    },
+                    onEmptyDay = { day ->
+                        scope.launch {
+                            snackbarHostState.showSnackbar("No classes scheduled on ${day.lowercase().replaceFirstChar(Char::uppercase)}")
+                        }
+                    }
+                )
+            }
+        }
+
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(
                 start = ListGutter,
-                // 0.dp, not AppSpacing.Md: a sticky header pins to the content
-                // edge, so any top padding here becomes an uncovered band the
-                // heading would scroll through *above* the chips. The 12.dp is
-                // carried by the heading item's own top padding instead.
+                // 0.dp: this list begins directly under the static chip bar, so
+                // any top padding would be a visible dead band between the bar
+                // and the first row. The 12.dp the screen wants below the status
+                // bar is carried by the heading item's own top padding.
                 top = 0.dp,
                 end = ListGutter,
                 bottom = listBottomInset()
             ),
             verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
         ) {
-            // Only the day-chip row is pinned. The heading and the countdown
-            // card are ordinary items that scroll away, so a swipe up still
-            // hands their vertical space back to the entries; the chips cost
-            // the student one fixed band for the whole week. Everything below
-            // the chips — the countdown card, the day labels, the entry cards —
-            // passes underneath the opaque pinned surface.
+            // Heading and countdown are ordinary items and scroll away; the day
+            // labels below are the list's sticky rows and pin to this list's
+            // content edge, which is directly under the static chip bar.
             item(key = ITEM_KEY_HEADING) {
-                // Carries what used to live in `contentPadding.top`, so the
-                // screen still starts 12.dp below the status bar while the
-                // pinned chips have an unpainted-free band to sit in.
+                // Carries what `contentPadding.top` used to hold, so the screen
+                // still starts 12.dp below the status bar without leaving a
+                // gap the day labels would scroll through.
                 Box(modifier = Modifier.padding(top = AppSpacing.Md)) {
                     ScreenHeading(
                         title = "Weekly class schedule",
-                        subtitle = schedule.title.ifBlank { "Your semester classes" }
-                    )
-                }
-            }
-
-            stickyHeader(key = ITEM_KEY_DAY_CHIPS) {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .onSizeChanged { chipRowHeightPx = it.height },
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    Column(modifier = Modifier.padding(bottom = ChipRowBottomPadding)) {
-                        WeeklyDayChipsRow(
-                            weekDays = weekDays,
-                            classDays = classDays,
-                            selectedDay = selectedDay,
-                            onSelectDay = { day ->
-                                selectedDay = day
-                                suppressHighlight = true
-                                scope.launch {
-                                    try {
-                                        listState.animateScrollToItem(
-                                            index = dayGroupLabelItemIndex(
-                                                day = day,
-                                                weekDays = weekDays,
-                                                classDays = classDays,
-                                                groups = groups
-                                            ),
-                                            // Push the target down by exactly the
-                                            // pinned band's height so the day label
-                                            // rests *below* the chips instead of
-                                            // behind them.
-                                            scrollOffset = -chipRowHeightPx
-                                        )
-                                    } finally {
-                                        suppressHighlight = false
+                        subtitle = schedule.title.ifBlank { "Your semester classes" },
+                        // Same slot the result and transcript screens use for
+                        // their share buttons, so the affordance reads
+                        // identically across the app. It lives here rather than
+                        // in the top app bar because this block only composes on
+                        // the "Weekly Classes" sub-tab, which is what scopes the
+                        // button to that view without threading the sub-tab
+                        // selection up to PortalTopBar.
+                        action = {
+                            IconButton(
+                                onClick = {
+                                    // `shareContext` is read at composition time,
+                                    // not inside this lambda: an onClick body is
+                                    // not a composable scope, so
+                                    // `LocalContext.current` cannot be called
+                                    // here. Holding it only for the life of this
+                                    // composition is what keeps the Activity
+                                    // from leaking into the ViewModel.
+                                    //
+                                    // `shareScope.launch` is required because the
+                                    // renderer is a suspend function: it allocates
+                                    // a ~10MB bitmap and PNG-compresses it on
+                                    // Dispatchers.Default. Launching on the
+                                    // composition scope also ties the job to this
+                                    // screen, so it is cancelled if the student
+                                    // leaves before the chooser appears.
+                                    shareScope.launch {
+                                        runCatching {
+                                            shareScheduleAsPng(shareContext, studentName, schedule)
+                                        }.onFailure {
+                                            Toast.makeText(
+                                                shareContext,
+                                                "Could not share schedule.",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
                                     }
                                 }
-                            },
-                            onEmptyDay = { day ->
-                                scope.launch {
-                                    snackbarHostState.showSnackbar("No classes scheduled on ${day.lowercase().replaceFirstChar(Char::uppercase)}")
-                                }
+                            ) {
+                                Icon(Icons.Rounded.Share, contentDescription = "Share schedule")
                             }
-                        )
-                    }
+                        }
+                    )
                 }
             }
 
@@ -1467,18 +1514,78 @@ private fun WeeklyScheduleContent(
                 }
             } else {
                 groups.forEach { (day, entries) ->
-                    item(key = dayLabelKey(day)) {
+                    // Sticky, and now genuinely permanent-looking: the chip bar that
+                    // used to evict these labels has been hoisted OUT of the
+                    // list, so this is the only sticky layer and nothing can
+                    // push it off. It pins to the list's content edge, which
+                    // sits directly beneath the static chip bar -- no modifier
+                    // offset needed, and none would work anyway, since a pin
+                    // position is decided by the LazyList layout rather than by
+                    // any modifier inside the slot.
+                    //
+                    // The dead full-width `background` shield that used to sit
+                    // here is gone: the pill is the only visible shape, and the
+                    // 20.dp of empty padding it contributed per day header went
+                    // with it.
+                    //
+                    // `CircleShape`: the pill is roughly 56x32dp, so its
+                    // half-height is ~16dp and a circular outline is a true
+                    // capsule end on both axes. A fixed `RoundedCornerShape`
+                    // would need hand-matching to that height and would drift
+                    // when the font scale changed.
+                    stickyHeader(key = dayLabelKey(day)) {
+                        // Invisible full-width shield. A pinned sticky header is
+                        // composed in a separate overlay layout drawn ON TOP of
+                        // the main item layer, so entry cards travel underneath
+                        // the day label. The pill alone covers only its own
+                        // ~56dp and cannot mask a 360dp scroll, so card titles
+                        // ghost straight through the day name without this.
+                        //
+                        // Fill is `background`, matching the list, so the mask is
+                        // invisible and only the pill reads as a shape.
                         Surface(
                             modifier = Modifier.fillMaxWidth(),
                             color = MaterialTheme.colorScheme.background
                         ) {
-                            Text(
-                                text = day,
-                                modifier = Modifier.padding(vertical = AppSpacing.Sm),
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Surface(
+                                modifier = Modifier.padding(
+                                    // ListGutter keeps the capsule's inset on
+                                    // the same 18.dp axis as every other row in
+                                    // this list.
+                                    horizontal = ListGutter,
+                                    // AppSpacing.Xs. NOTE: the list's
+                                    // `Arrangement.spacedBy(AppSpacing.Md)`
+                                    // gap is 12.dp, and `Arrangement` space is
+                                    // layout space this shield does NOT cover,
+                                    // so an 8.dp strip directly beneath the
+                                    // shield is still exposed while cards slide
+                                    // under it. AppSpacing.Md (12.dp) would close
+                                    // that seam completely at the cost of 16.dp
+                                    // more height per day header.
+                                    vertical = AppSpacing.Xs
+                                ),
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                shape = CircleShape
+                            ) {
+                                Text(
+                                    text = day,
+                                    // 16.dp / 6.dp track the pill's type size.
+                                    // Neither is a spacing token; AppSpacing
+                                    // stops at 4.dp.
+                                    modifier = Modifier.padding(
+                                        horizontal = 16.dp,
+                                        vertical = 6.dp
+                                    ),
+                                    // titleSmall, not labelMedium: the day is the
+                                    // only orientation cue in a list of otherwise
+                                    // identical cards, so it is set at the size a
+                                    // reader scans for rather than the size a
+                                    // caption uses.
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
                     items(entries, key = { entry -> entryKey(day, entry) }) { entry ->
@@ -1518,9 +1625,6 @@ private fun WeeklyScheduleContent(
     }
 }
 
-/** Bottom breathing room inside the pinned chip surface, matching the list gap. */
-private val ChipRowBottomPadding = 12.dp
-
 /** Key prefix of the per-day label rows. */
 internal const val DAY_LABEL_KEY_PREFIX = "day-"
 
@@ -1552,13 +1656,19 @@ internal const val ITEM_KEY_DASHBOARD = "class-dashboard"
 
 /**
  * Number of structural items the list emits before the first day group:
- * heading, day chips, countdown card.
+ * heading, countdown card.
  *
- * [dayHeaderItemIndex] adds this to every target, so adding or removing a
- * structural header item is a single-line change here rather than a silent
- * off-by-N in the scroll arithmetic.
+ * TWO, not three. The day-chip bar was hoisted out of the `LazyColumn` into a
+ * static sibling, so it no longer occupies an index at all. When it was an
+ * `item` this was 3; when it was a `stickyHeader` it was still 3, because
+ * `item` and `stickyHeader` each consume exactly one index. Lifting it out of
+ * the list is the one change that removes a slot.
+ *
+ * [dayGroupLabelItemIndex] adds this to every target, so adding or removing a
+ * structural item is a single-line change here rather than a silent off-by-N in
+ * the scroll arithmetic.
  */
-internal const val ITEMS_BEFORE_DAY_GROUPS = 3
+internal const val ITEMS_BEFORE_DAY_GROUPS = 2
 
 /**
  * What a single LazyList row represents, independent of Compose.
@@ -1705,8 +1815,9 @@ private fun WeeklyDayChipsRow(
  * Walks the day groups in the same order the list emits them and counts what has
  * already been placed:
  *
- *  - [ITEMS_BEFORE_DAY_GROUPS] structural items (heading, day chips, countdown
- *    card) always precede the groups.
+ *  - [ITEMS_BEFORE_DAY_GROUPS] structural items (heading, countdown card)
+ *    always precede the groups. The day-chip bar is not among them: it is a
+ *    static sibling of the list, not a row in it.
  *  - For each earlier day that has classes, one label row plus that day's entry
  *    cards.
  *
@@ -1714,9 +1825,9 @@ private fun WeeklyDayChipsRow(
  * weekday ordering cannot drift from the chip order the student is tapping. Days
  * with no classes are skipped, matching the list, which emits no group for them.
  *
- * `item {}` and `stickyHeader {}` each occupy exactly one index, so promoting
- * the chips to a sticky header and demoting the labels to plain items left this
- * arithmetic bit-for-bit identical.
+ * `item {}` and `stickyHeader {}` each occupy exactly one index, so swapping
+ * which of the chips and the labels is pinned leaves this arithmetic
+ * bit-for-bit identical.
  */
 internal fun dayGroupLabelItemIndex(
     day: String,
@@ -2441,6 +2552,7 @@ private fun TranscriptScreen(
     }
 
     val context = LocalContext.current
+    val shareScope = rememberCoroutineScope()
     val completed = remember(transcript) { completedHours(transcript.courses) }
     val remaining = remember(transcript) { remainingHours(transcript.courses) }
     val aGrades = transcript.courses.count { it.grade.trim().uppercase().startsWith("A") }
@@ -2475,10 +2587,12 @@ private fun TranscriptScreen(
                         PolicyInfoButton()
                         IconButton(
                             onClick = {
-                                runCatching { shareTranscriptAsPng(context, studentName, transcript) }
-                                    .onFailure {
-                                        Toast.makeText(context, "Could not share transcript.", Toast.LENGTH_SHORT).show()
-                                    }
+                                shareScope.launch {
+                                    runCatching { shareTranscriptAsPng(context, studentName, transcript) }
+                                        .onFailure {
+                                            Toast.makeText(context, "Could not share transcript.", Toast.LENGTH_SHORT).show()
+                                        }
+                                }
                             }
                         ) {
                             Icon(Icons.Rounded.Share, "Share transcript")
