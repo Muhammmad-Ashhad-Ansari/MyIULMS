@@ -175,6 +175,7 @@ fun App(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun LoginScreen(
     vm: MainViewModel,
@@ -187,6 +188,15 @@ private fun LoginScreen(
     var rememberPassword by remember { mutableStateOf(vm.savedPassword != null) }
     var showPassword by remember { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
+
+    // Read in composition so the footer recomposes on the keyboard transition
+    // rather than drifting with the window resize.
+    //
+    // No `.value`: in foundation-layout 1.10.4 `isImeVisible` is a @Composable
+    // getter on WindowInsets.Companion returning Boolean directly. It was a
+    // State<Boolean> in older releases, so `.value` compiles against the wrong
+    // overload set here.
+    val isKeyboardVisible = WindowInsets.isImeVisible
 
     Box(
         modifier = Modifier
@@ -374,15 +384,23 @@ private fun LoginScreen(
             }
         }
 
-        Text(
-            text = "by Not_Einstein",
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = AppSpacing.Md),
-            textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        // Anchored to the bottom of the window, and removed entirely while the
+        // keyboard is up. The root Box carries `.imePadding()` and the activity
+        // is `adjustResize`, so the box's bottom edge tracks the keyboard: the
+        // footer used to ride up with it and land directly on top of the
+        // password field. Gating on IME visibility is cleaner than an animation
+        // here -- there is nothing to animate to, the row should not exist.
+        if (!isKeyboardVisible) {
+            Text(
+                text = "by Not_Einstein",
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = AppSpacing.Md),
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
 
         Row(
             modifier = Modifier
