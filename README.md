@@ -51,7 +51,7 @@ The app connects directly to IULMS. It does not use a MyIULMS backend.
 ## How it works
 
 <p align="center">
-  <img src="docs/images/iulms-client-architecture.jpg" alt="MyIULMS client architecture: Compose UI, MainViewModel, IulmsClient, and the IULMS portal" width="800">
+  <img src="docs/images/iulms-client-architecture.png" alt="IULMS client application architecture: Compose screens, MainViewModel, IulmsClient, and university portal" width="1000">
 </p>
 
 The app signs in to the existing portal, keeps session cookies in memory, fetches authenticated pages with OkHttp, and parses HTML with Jsoup or transcript JSON with `org.json`. The resulting Kotlin data is held by the `MainViewModel` and displayed with Jetpack Compose. When a session expires, the client attempts to sign in again and retry the request.
