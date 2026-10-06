@@ -62,6 +62,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -1312,10 +1313,29 @@ private fun WeeklyScheduleContent(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
+    /**
+     * Measured height of the pinned chip row, in pixels.
+     *
+     * Not a constant: the chips are `heightIn(min = 48.dp)` and grow with the
+     * font scale, so a hardcoded 64.dp silently under-scrolls on large text.
+     * Seeded with the `48 + 12` arithmetic below so the very first tap (which
+     * can land before the first `onSizeChanged`) still lands in the right place;
+     * the measured value takes over from the second frame on.
+     */
+    val density = LocalDensity.current
+    var chipRowHeightPx by remember {
+        mutableIntStateOf(with(density) { (48.dp + ChipRowBottomPadding).roundToPx() })
+    }
+
+    /** Suppresses the scroll-driven highlight while a chip tap is animating. */
+    var suppressHighlight by remember { mutableStateOf(false) }
+
     Column(modifier = Modifier.fillMaxSize()) {
         val focusState = rememberScheduleFocusState(
             schedule = schedule,
-            enabled = enabled
+            enabled = enabled,
+            focusVisible = listState.layoutInfo.visibleItemsInfo
+                .any { it.key == ITEM_KEY_DASHBOARD }
         )
 
         LazyColumn(
@@ -1323,46 +1343,77 @@ private fun WeeklyScheduleContent(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 start = ListGutter,
-                top = AppSpacing.Md,
+                // 0.dp, not AppSpacing.Md: a sticky header pins to the content
+                // edge, so any top padding here becomes an uncovered band the
+                // heading would scroll through *above* the chips. The 12.dp is
+                // carried by the heading item's own top padding instead.
+                top = 0.dp,
                 end = ListGutter,
                 bottom = listBottomInset()
             ),
             verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
         ) {
-            // The screen heading and the day chips now scroll WITH the list
-            // instead of sitting in static chrome above it, which is what hands
-            // their ~145.dp back to the entries on a swipe up.
+            // Only the day-chip row is pinned. The heading and the countdown
+            // card are ordinary items that scroll away, so a swipe up still
+            // hands their vertical space back to the entries; the chips cost
+            // the student one fixed band for the whole week. Everything below
+            // the chips — the countdown card, the day labels, the entry cards —
+            // passes underneath the opaque pinned surface.
             item(key = ITEM_KEY_HEADING) {
-                ScreenHeading(
-                    title = "Weekly class schedule",
-                    subtitle = schedule.title.ifBlank { "Your semester classes" }
-                )
+                // Carries what used to live in `contentPadding.top`, so the
+                // screen still starts 12.dp below the status bar while the
+                // pinned chips have an unpainted-free band to sit in.
+                Box(modifier = Modifier.padding(top = AppSpacing.Md)) {
+                    ScreenHeading(
+                        title = "Weekly class schedule",
+                        subtitle = schedule.title.ifBlank { "Your semester classes" }
+                    )
+                }
             }
 
-            item(key = ITEM_KEY_DAY_CHIPS) {
-                WeeklyDayChipsRow(
-                    weekDays = weekDays,
-                    classDays = classDays,
-                    selectedDay = selectedDay,
-                    onSelectDay = { day ->
-                        selectedDay = day
-                        scope.launch {
-                            listState.animateScrollToItem(
-                                dayHeaderItemIndex(
-                                    day = day,
-                                    weekDays = weekDays,
-                                    classDays = classDays,
-                                    groups = groups
-                                )
-                            )
-                        }
-                    },
-                    onEmptyDay = { day ->
-                        scope.launch {
-                            snackbarHostState.showSnackbar("No classes scheduled on ${day.lowercase().replaceFirstChar(Char::uppercase)}")
-                        }
+            stickyHeader(key = ITEM_KEY_DAY_CHIPS) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onSizeChanged { chipRowHeightPx = it.height },
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    Column(modifier = Modifier.padding(bottom = ChipRowBottomPadding)) {
+                        WeeklyDayChipsRow(
+                            weekDays = weekDays,
+                            classDays = classDays,
+                            selectedDay = selectedDay,
+                            onSelectDay = { day ->
+                                selectedDay = day
+                                suppressHighlight = true
+                                scope.launch {
+                                    try {
+                                        listState.animateScrollToItem(
+                                            index = dayGroupLabelItemIndex(
+                                                day = day,
+                                                weekDays = weekDays,
+                                                classDays = classDays,
+                                                groups = groups
+                                            ),
+                                            // Push the target down by exactly the
+                                            // pinned band's height so the day label
+                                            // rests *below* the chips instead of
+                                            // behind them.
+                                            scrollOffset = -chipRowHeightPx
+                                        )
+                                    } finally {
+                                        suppressHighlight = false
+                                    }
+                                }
+                            },
+                            onEmptyDay = { day ->
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("No classes scheduled on ${day.lowercase().replaceFirstChar(Char::uppercase)}")
+                                }
+                            }
+                        )
                     }
-                )
+                }
             }
 
             item(key = ITEM_KEY_DASHBOARD) {
@@ -1382,7 +1433,7 @@ private fun WeeklyScheduleContent(
                 }
             } else {
                 groups.forEach { (day, entries) ->
-                    stickyHeader(key = "day-$day") {
+                    item(key = dayLabelKey(day)) {
                         Surface(
                             modifier = Modifier.fillMaxWidth(),
                             color = MaterialTheme.colorScheme.background
@@ -1396,14 +1447,55 @@ private fun WeeklyScheduleContent(
                             )
                         }
                     }
-                    items(entries, key = { entry -> "$day-${entry.courseCode}-${entry.time}" }) { entry ->
+                    items(entries, key = { entry -> entryKey(day, entry) }) { entry ->
                         WeeklyScheduleCard(entry)
                     }
                 }
             }
         }
+
+        /**
+         * Scroll-driven chip highlight.
+         *
+         * Reads the visible keys, so the day that owns the most visible rows
+         * wins; a partially visible next day cannot steal the chip early the way
+         * `firstVisibleItemIndex` alone would. Structural rows contribute
+         * nothing, which is why a viewport still showing the heading/chips/focus
+         * card resolves to `null` and leaves the selection alone.
+         *
+         * This observer only ever writes `selectedDay` — it never scrolls, or it
+         * would fight the finger that is currently driving the list.
+         */
+        val dominantDay by remember(groups, classDays) {
+            derivedStateOf {
+                dominantDay(
+                    visibleKeys = listState.layoutInfo.visibleItemsInfo.map { it.key },
+                    groups = groups,
+                    classDays = classDays
+                )
+            }
+        }
+        LaunchedEffect(dominantDay, listState.isScrollInProgress) {
+            if (!listState.isScrollInProgress || suppressHighlight) return@LaunchedEffect
+            if (dominantDay != null && dominantDay != selectedDay) {
+                selectedDay = dominantDay
+            }
+        }
     }
 }
+
+/** Bottom breathing room inside the pinned chip surface, matching the list gap. */
+private val ChipRowBottomPadding = 12.dp
+
+/** Key prefix of the per-day label rows. */
+internal const val DAY_LABEL_KEY_PREFIX = "day-"
+
+/** LazyList key of [day]'s label row. */
+internal fun dayLabelKey(day: String): String = "$DAY_LABEL_KEY_PREFIX$day"
+
+/** LazyList key of a single entry card, matching the `items(...)` key lambda. */
+internal fun entryKey(day: String, entry: WeeklyScheduleEntry): String =
+    "$day-${entry.courseCode}-${entry.time}"
 
 /**
  * Gutter for the weekly schedule list.
@@ -1414,10 +1506,15 @@ private fun WeeklyScheduleContent(
  */
 private val ListGutter = 18.dp
 
-/** Keys of the structural items that precede the day groups. */
-private const val ITEM_KEY_HEADING = "weekly-heading"
-private const val ITEM_KEY_DAY_CHIPS = "weekly-day-chips"
-private const val ITEM_KEY_DASHBOARD = "class-dashboard"
+/**
+ * Keys of the structural items that precede the day groups.
+ *
+ * `internal` rather than `private` because [rowForKey] has to recognise them
+ * and the highlight tests assert against the very same literals.
+ */
+internal const val ITEM_KEY_HEADING = "weekly-heading"
+internal const val ITEM_KEY_DAY_CHIPS = "weekly-day-chips"
+internal const val ITEM_KEY_DASHBOARD = "class-dashboard"
 
 /**
  * Number of structural items the list emits before the first day group:
@@ -1427,7 +1524,85 @@ private const val ITEM_KEY_DASHBOARD = "class-dashboard"
  * structural header item is a single-line change here rather than a silent
  * off-by-N in the scroll arithmetic.
  */
-private const val ITEMS_BEFORE_DAY_GROUPS = 3
+internal const val ITEMS_BEFORE_DAY_GROUPS = 3
+
+/**
+ * What a single LazyList row represents, independent of Compose.
+ *
+ * The scroll-driven chip highlight has to answer "which day is the student
+ * looking at" from the list's visible keys alone. That is pure bookkeeping, so
+ * it is modelled as data and unit-tested without a Robolectric runner.
+ */
+internal sealed interface ScheduleRow {
+    data object Heading : ScheduleRow
+    data object DayChips : ScheduleRow
+    data object FocusCard : ScheduleRow
+    data class DayLabel(val day: String) : ScheduleRow
+    data class EntryCard(val day: String) : ScheduleRow
+}
+
+/**
+ * Maps a LazyList item key to the [ScheduleRow] it stands for.
+ *
+ * The key literals live in exactly one place each — [ITEM_KEY_HEADING],
+ * [ITEM_KEY_DAY_CHIPS], [ITEM_KEY_DASHBOARD], [dayLabelKey] and [entryKey] —
+ * so this cannot drift away from the list body. Entry keys are reverse-looked
+ * because they encode day, course code and time, which is the only place the
+ * day of an arbitrary card is recoverable from its key.
+ *
+ * An unknown key is reported as [ScheduleRow.Heading], i.e. as a structural row
+ * that contributes nothing to the dominance count. That keeps the function
+ * total: a key from a future row type degrades to "ignored" rather than
+ * throwing inside a scroll callback.
+ */
+internal fun rowForKey(
+    key: Any,
+    groups: Map<String, List<WeeklyScheduleEntry>>
+): ScheduleRow = when {
+    key == ITEM_KEY_HEADING -> ScheduleRow.Heading
+    key == ITEM_KEY_DAY_CHIPS -> ScheduleRow.DayChips
+    key == ITEM_KEY_DASHBOARD -> ScheduleRow.FocusCard
+    key is String && key.startsWith(DAY_LABEL_KEY_PREFIX) ->
+        ScheduleRow.DayLabel(key.removePrefix(DAY_LABEL_KEY_PREFIX))
+    else -> {
+        val day = groups.entries
+            .firstOrNull { (groupDay, entries) ->
+                entries.any { entry -> entryKey(groupDay, entry) == key }
+            }
+            ?.key
+        if (day != null) ScheduleRow.EntryCard(day) else ScheduleRow.Heading
+    }
+}
+
+/**
+ * Day owning the most visible rows, or `null` when only structural rows show.
+ *
+ * Counting rows rather than picking `firstVisibleItemIndex` is deliberate: the
+ * index alone flips as soon as the previous day's last card leaves, and it
+ * needs a reverse map back to a day name that varies per week. Weighting by
+ * visible rows instead means the chip only moves when the viewport has actually
+ * committed to the next day. Ties resolve to the earliest day in [visibleRows]
+ * because [LinkedHashMap] preserves insertion order and `maxByOrNull` keeps the
+ * first maximum.
+ */
+internal fun dominantDay(
+    visibleKeys: List<Any>,
+    groups: Map<String, List<WeeklyScheduleEntry>>,
+    classDays: Set<String>
+): String? {
+    val weightByDay = LinkedHashMap<String, Int>()
+    visibleKeys.forEach { key ->
+        when (val row = rowForKey(key, groups)) {
+            is ScheduleRow.DayLabel -> weightByDay.merge(row.day, 1, Int::plus)
+            is ScheduleRow.EntryCard -> weightByDay.merge(row.day, 1, Int::plus)
+            else -> Unit // structural rows own no day
+        }
+    }
+    return weightByDay
+        .filterKeys { it in classDays }
+        .maxByOrNull { it.value }
+        ?.key
+}
 
 /**
  * Day-of-week chips for the weekly schedule.
@@ -1491,21 +1666,25 @@ private fun WeeklyDayChipsRow(
 }
 
 /**
- * LazyList index of [day]'s sticky header.
+ * LazyList index of [day]'s day-label row.
  *
  * Walks the day groups in the same order the list emits them and counts what has
  * already been placed:
  *
  *  - [ITEMS_BEFORE_DAY_GROUPS] structural items (heading, day chips, countdown
  *    card) always precede the groups.
- *  - For each earlier day that has classes, one sticky header plus that day's
- *    entry cards.
+ *  - For each earlier day that has classes, one label row plus that day's entry
+ *    cards.
  *
  * The earlier days are taken from [weekDays] rather than from [groups] so the
  * weekday ordering cannot drift from the chip order the student is tapping. Days
  * with no classes are skipped, matching the list, which emits no group for them.
+ *
+ * `item {}` and `stickyHeader {}` each occupy exactly one index, so promoting
+ * the chips to a sticky header and demoting the labels to plain items left this
+ * arithmetic bit-for-bit identical.
  */
-internal fun dayHeaderItemIndex(
+internal fun dayGroupLabelItemIndex(
     day: String,
     weekDays: List<String>,
     classDays: Set<String>,
@@ -1522,8 +1701,9 @@ internal fun dayHeaderItemIndex(
 /**
  * Dashboard tick state.
  *
- * [focus] is recomputed on each tick; the ticker only runs while [enabled] and
- * while a class is actually live, so there is no off-screen or idle work.
+ * [focus] is recomputed on each tick; the ticker only runs while [enabled],
+ * while the card is actually on screen, and while a class is live, so there is
+ * no off-screen or idle work.
  */
 private data class ScheduleFocusUiState(
     val focus: ScheduleFocus,
@@ -1533,12 +1713,14 @@ private data class ScheduleFocusUiState(
 @Composable
 private fun rememberScheduleFocusState(
     schedule: WeeklySchedule?,
-    enabled: Boolean
+    enabled: Boolean,
+    focusVisible: Boolean
 ): ScheduleFocusUiState {
     val entries = remember(schedule) { schedule?.entries.orEmpty() }
 
-    // 1 Hz heartbeat. Only advances while the weekly sub-tab is visible AND a
-    // class is live; otherwise the coroutine is not running at all.
+    // 1 Hz heartbeat. Only advances while the weekly sub-tab is visible, the
+    // card is inside the viewport, AND a class is live; otherwise the coroutine
+    // is not running at all.
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var isLive by remember { mutableStateOf(false) }
 
@@ -1553,12 +1735,18 @@ private fun rememberScheduleFocusState(
         nowMillis = System.currentTimeMillis()
     }
 
-    LaunchedEffect(isLive, enabled) {
-        if (!enabled || !isLive) return@LaunchedEffect
-        while (enabled && isLive) {
+    LaunchedEffect(isLive, enabled, focusVisible) {
+        if (!enabled || !isLive || !focusVisible) return@LaunchedEffect
+        while (enabled && isLive && focusVisible) {
             delay(1000L)
             nowMillis = System.currentTimeMillis()
         }
+    }
+
+    // Re-entering the viewport with a stale clock would paint the countdown at
+    // its pre-scroll value for up to a second, so resync on the way back in.
+    LaunchedEffect(focusVisible) {
+        if (focusVisible) nowMillis = System.currentTimeMillis()
     }
 
     val focus = remember(entries, nowMillis) {
