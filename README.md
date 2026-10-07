@@ -13,7 +13,7 @@
   <img alt="Target SDK 37" src="https://img.shields.io/badge/Target%20SDK-Android%2037-3DDC84?style=for-the-badge&logo=android&logoColor=white">
   <img alt="Build passing" src="https://img.shields.io/badge/Build-Passing-3fb950?style=for-the-badge&logo=githubactions&logoColor=white">
   <img alt="74 unit tests passing" src="https://img.shields.io/badge/Unit%20Tests-74%20passing-3fb950?style=for-the-badge">
-  <a href="https://github.com/Muhammmad-Ansari/MyIULMS/blob/main/LICENSE">
+  <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/blob/main/LICENSE">
     <img alt="MIT License" src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge">
   </a>
 </p>
@@ -23,9 +23,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Muhammmad-Ansari/MyIULMS/releases/latest"><strong>⬇ Download latest APK</strong></a>
+  <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/latest"><strong>⬇ Download latest APK</strong></a>
   ·
-  <a href="https://github.com/Muhammmad-Ansari/MyIULMS/issues">Report an issue</a>
+  <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/issues">Report an issue</a>
 </p>
 
 ---
@@ -75,7 +75,7 @@ Because it depends on IULMS page structures and endpoints, portal changes may re
 - An existing IULMS student account to use the app
 
 ```bash
-git clone https://github.com/Muhammmad-Ansari/MyIULMS.git
+git clone https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS.git
 cd MyIULMS
 ```
 
