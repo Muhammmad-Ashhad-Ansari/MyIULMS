@@ -30,13 +30,23 @@
 
 ---
 
-## What MyIULMS does
+## MyIULMS: Your Academic Day, One Tap Away
 
-**MyIULMS** is an independent Android app that puts Iqra University's IULMS portal in a mobile-first interface. Sign in with an existing IULMS account and everything below becomes available offline of the portal's desktop layout.
+Need to check your class, results, transcript, or fee vouchers? With the browser portal, that can mean going from login to the portal home, opening SIC, dismissing pop-ups, and then finding the page you need.
 
-The app talks to IULMS directly. There is no MyIULMS backend.
+**MyIULMS brings the everyday academic essentials closer.** Open the app directly to your schedule, then move easily between attendance, results, transcript, and vouchers.
 
-> **Unofficial project.** Not affiliated with, maintained by, sponsored by, or endorsed by Iqra University.
+## Made for the things students check most
+
+- **Know what’s happening in class:** See whether a class is live or coming up, its duration, and the time remaining.
+- **Check attendance at a glance:** Open your attendance information without navigating through the wider portal.
+- **Keep results and records handy:** View results and transcript details, and share result, transcript, or schedule as an image.
+- **Track degree progress:** See completed credit hours and progress toward degree completion.
+- **Stay ahead of vouchers:** Review voucher due or overdue status and the total outstanding amount.
+
+**Less time finding the right page. More time getting on with your day.**
+
+MyIULMS is a focused companion for common student tasks. The university portal remains the place for its broader services; the app makes frequently checked academic information easier to reach.
 
 ---
 
