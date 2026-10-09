@@ -172,13 +172,35 @@ MyIULMS/
 
 ---
 
-## Privacy and credentials
+## Trust and privacy
 
-- Credentials are entered by the user and are never hard-coded in source.
-- **Remember me** stores login details locally with AndroidX `EncryptedSharedPreferences`, backed by Android Keystore.
-- The encrypted credential file is excluded from cloud backup and device-to-device transfer.
-- Session cookies stay in the running app's HTTP client.
-- Academic requests go straight to IULMS; there is no separate backend.
+**MyIULMS is unofficial.** It is a student project, not built or approved by Iqra University, and not a replacement for IULMS.
+
+**Where your login goes.** Signing in sends your registration number and password over HTTPS to `iulms.edu.pk`, exactly as a browser would. MyIULMS has no server and no student database, so nothing is sent to the project or any third party. Credentials are entered by you and are never hard-coded in source. The app requests one Android permission: internet — no analytics, telemetry, or crash reporting.
+
+**What is stored on your device.**
+
+| | Remember me **on** | Remember me **off** |
+|---|---|---|
+| Credentials on disk | Yes, via AndroidX `EncryptedSharedPreferences` backed by Android Keystore | Nothing is written to disk |
+| Included in cloud backup / phone transfer | No — excluded by the app's backup rules | Not applicable |
+| Session cookies | Memory only, cleared on sign-out | Memory only |
+
+This protects a lost or backed-up phone well. It does **not** protect a rooted device, or one running software that can read app files, and no app can promise credentials can never leak. Signing out ends the session but does **not** delete remembered credentials — log in again with "Remember me" unticked, or uninstall, to remove them.
+
+**Before you share.** Result, transcript, and schedule images include your **name**. Check an image before posting it. The app does not block screenshots.
+
+**Portal dependency.** Everything shown comes from IULMS, fetched when you open a screen; nothing is cached offline. If the portal is down or its pages change, parts of the app will stop working until updated.
+
+**Signing.** The released APK uses the project's Android debug certificate:
+
+```text
+SHA-256: fc27702dc58fa23597ea983a9227db642b3510b2b29c12c342d24a979d19aaa3
+```
+
+This identifies **which certificate signed the file**, so you can confirm an update came from the same source as the version you already have. It does not certify the publisher, does not imply any Iqra University affiliation, and is not a security audit.
+
+Full detail, including exactly what the app does and does not do with your data, is in [docs/student-trust-and-community-faq.md](docs/student-trust-and-community-faq.md). Prefer to read the code first? [Build it yourself](#debug-apk).
 
 > ### ⚠️ Local-only handoff file
 >
