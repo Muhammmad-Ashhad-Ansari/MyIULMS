@@ -353,13 +353,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun refresh(tab: Int) {
+    // `showRefreshFeedback` gates only the success snackbar. The toolbar
+    // button and the retry buttons confirm with it; the pull gesture passes
+    // false because its own on-screen indicator is the success signal.
+    fun refresh(tab: Int, showRefreshFeedback: Boolean = true) {
         when (tab) {
-            0 -> loadSchedules(showRefreshFeedback = true)
-            1 -> loadAttendance(showRefreshFeedback = true)
-            2 -> loadExamResult(showRefreshFeedback = true)
-            3 -> loadTranscript(showRefreshFeedback = true)
-            else -> loadVouchers(showRefreshFeedback = true)
+            0 -> loadSchedules(showRefreshFeedback)
+            1 -> loadAttendance(showRefreshFeedback)
+            2 -> loadExamResult(showRefreshFeedback)
+            3 -> loadTranscript(showRefreshFeedback)
+            else -> loadVouchers(showRefreshFeedback)
         }
     }
 }

@@ -32,7 +32,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ExitToApp
 import androidx.compose.material.icons.automirrored.rounded.FactCheck
@@ -42,7 +41,10 @@ import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.automirrored.rounded.ReceiptLong
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.autofill.ContentType
@@ -52,6 +54,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
@@ -62,9 +65,11 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.Dp
 
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -75,6 +80,9 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.myiulms.ui.dashboard.ScheduleFocus
 import com.example.myiulms.ui.dashboard.ScheduleFocusCard
@@ -95,6 +103,7 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -450,28 +459,19 @@ private fun HomeScreen(
     darkTheme: Boolean,
     onThemeToggle: () -> Unit
 ) {
-    var tab by remember { mutableIntStateOf(0) }
     val pagerState = rememberPagerState(initialPage = 0) { TAB_COUNT }
+    // The pager is the single source of truth. `settledPage` only changes after
+    // a swipe or tap has settled, so loading, refresh and error state always
+    // match the screen the user actually ended up on.
+    val settledPage = pagerState.settledPage
+    // Presentation only: the pill follows the page nearest the snap point while
+    // an animation is running, but it never drives loading or actions.
+    val selectedPage = pagerState.currentPage
 
-    // Pager -> tab. Only the settled page updates `tab`, so data loading and the
-    // existing `when (tab)` content keep working off a single source of truth.
-    LaunchedEffect(pagerState) {
-        snapshotFlow { pagerState.currentPage }.collect { page ->
-            tab = page
-        }
-    }
-
-    // tab -> pager. Keeps NavigationBar taps in sync with a settled swipe. The
-    // guard prevents a feedback loop with the collector above.
-    LaunchedEffect(tab) {
-        if (pagerState.currentPage != tab) {
-            pagerState.animateScrollToPage(tab)
-        }
-    }
     val useCompactNavLabels = LocalDensity.current.fontScale >= 1.3f
     val showNavLabels = LocalDensity.current.fontScale < 1.4f
-    val screenState = vm.screenLoadStates[tab] ?: ScreenLoadState()
-    val hasData = when (tab) {
+    val screenState = vm.screenLoadStates[settledPage] ?: ScreenLoadState()
+    val hasData = when (settledPage) {
         0 -> vm.examSchedule != null && vm.weeklySchedule != null
         1 -> vm.attendance != null
         2 -> vm.examResult != null
@@ -479,6 +479,8 @@ private fun HomeScreen(
         else -> vm.vouchers != null
     }
     val snackbarHostState = remember { SnackbarHostState() }
+    val pageScope = rememberCoroutineScope()
+    val saveableStateHolder = rememberSaveableStateHolder()
 
     LaunchedEffect(vm.lastUpdatedAt) {
         if (vm.lastUpdatedAt != null) {
@@ -489,8 +491,8 @@ private fun HomeScreen(
         }
     }
 
-    LaunchedEffect(tab) {
-        when (tab) {
+    LaunchedEffect(settledPage) {
+        when (settledPage) {
             0 -> if (vm.examSchedule == null || vm.weeklySchedule == null) vm.loadSchedules()
             1 -> if (vm.attendance == null) vm.loadAttendance()
             2 -> if (vm.examResult == null) vm.loadExamResult()
@@ -508,7 +510,7 @@ private fun HomeScreen(
                 PortalTopBar(
                     darkTheme = darkTheme,
                     onThemeToggle = onThemeToggle,
-                    onRefresh = { vm.refresh(tab) },
+                    onRefresh = { vm.refresh(settledPage) },
                     refreshing = screenState.loading,
                     onCheckForUpdates = vm::checkForUpdates,
                     onLogout = vm::logout,
@@ -521,19 +523,54 @@ private fun HomeScreen(
                 // capsule's measured height and the `padding` consumed below stays
                 // correct, which is what keeps the last list card clear of it.
                 FloatingNavCapsule(
-                    selectedIndex = tab,
-                    onSelect = { tab = it },
+                    selectedIndex = selectedPage,
+                    // Drive the pager directly. There is no `tab` state to feed
+                    // back into an effect, so a tap can never cancel its own
+                    // animation.
+                    onSelect = { index ->
+                        pageScope.launch {
+                            // Adjacent tabs keep the short one-page slide: at a
+                            // distance of one the pager cannot pre-jump, so the
+                            // animation is a single clean leg that matches a swipe.
+                            // Non-adjacent taps snap instantly instead, because
+                            // `animateScrollToPage` pre-jumps to one viewport away
+                            // whenever the target is three or more pages off
+                            // (foundation's `MaxPagesForAnimateScroll`), which
+                            // briefly lands on — and composes — an unintended
+                            // intermediate tab. `scrollToPage` goes straight to the
+                            // target; the pill keeps animating on its own weight
+                            // springs while the page content changes instantly.
+                            if (abs(index - pagerState.currentPage) <= 1) {
+                                pagerState.animateScrollToPage(index)
+                            } else {
+                                pagerState.scrollToPage(index)
+                            }
+                        }
+                    },
                     useCompactLabels = useCompactNavLabels,
-                    showLabels = showNavLabels
+                    showLabels = showNavLabels,
+                    darkTheme = darkTheme
                 )
             },
             snackbarHost = { SnackbarHost(snackbarHostState) },
             containerColor = MaterialTheme.colorScheme.background
         ) { padding ->
+            val layoutDirection = LocalLayoutDirection.current
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding)
+                    // Keep the Scaffold's top and horizontal content padding (status
+                    // bar, display cutouts), but do not consume the bottom-bar
+                    // padding here: the pager viewport extends behind the floating
+                    // capsule so list content can scroll beneath the fade instead of
+                    // being clipped at the bar's top edge. Each list reserves the
+                    // full bar band exactly once through its own bottom padding.
+                    .padding(
+                        top = padding.calculateTopPadding(),
+                        start = padding.calculateStartPadding(layoutDirection),
+                        end = padding.calculateEndPadding(layoutDirection),
+                        bottom = 0.dp
+                    )
             ) {
                 if (screenState.loading && hasData) {
                     LinearProgressIndicator(
@@ -543,9 +580,9 @@ private fun HomeScreen(
                     )
                 }
                 if (hasData && screenState.error != null) {
-                    ErrorBanner(screenState.error, onRetry = { vm.refresh(tab) })
+                    ErrorBanner(screenState.error, onRetry = { vm.refresh(settledPage) })
                 }
-                if (tab == 4 && vm.voucherActionError != null) {
+                if (settledPage == 4 && vm.voucherActionError != null) {
                     ErrorBanner(
                         message = vm.voucherActionError!!,
                         onRetry = { vm.retryVoucherAction(context) }
@@ -556,25 +593,49 @@ private fun HomeScreen(
                     state = pagerState,
                     modifier = Modifier.weight(1f)
                 ) { page ->
-                    when (page) {
-                        0 -> SchedulesScreen(
-                            vm.examSchedule,
-                            vm.weeklySchedule,
-                            screenState,
-                            onRetry = { vm.refresh(tab) },
-                            snackbarHostState = snackbarHostState,
-                            studentName = vm.studentName
-                        )
-                        1 -> AttendanceScreen(vm.attendance, screenState, onRetry = { vm.refresh(tab) })
-                        2 -> ResultScreen(vm.examResult, vm.studentName, screenState, onRetry = { vm.refresh(tab) })
-                        3 -> TranscriptScreen(vm.transcript, vm.studentName, screenState, onRetry = { vm.refresh(tab) })
-                        else -> VoucherScreen(
-                            vouchers = vm.vouchers,
-                            downloadingVoucherNumber = vm.downloadingVoucherNumber,
-                            screenState = screenState,
-                            onRetry = { vm.refresh(tab) },
-                            onDownload = { voucher -> vm.openVoucher(context, voucher) }
-                        )
+                    val pageState = vm.screenLoadStates[page] ?: ScreenLoadState()
+                    // Keep each page's UI state (sub-tab, scroll, expanded rows,
+                    // filter) without holding every page in composition.
+                    saveableStateHolder.SaveableStateProvider(page) {
+                        when (page) {
+                            0 -> SchedulesScreen(
+                                vm.examSchedule,
+                                vm.weeklySchedule,
+                                pageState,
+                                onRetry = { vm.refresh(page) },
+                                onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) },
+                                snackbarHostState = snackbarHostState,
+                                studentName = vm.studentName
+                            )
+                            1 -> AttendanceScreen(
+                                vm.attendance,
+                                pageState,
+                                onRetry = { vm.refresh(page) },
+                                onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) }
+                            )
+                            2 -> ResultScreen(
+                                vm.examResult,
+                                vm.studentName,
+                                pageState,
+                                onRetry = { vm.refresh(page) },
+                                onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) }
+                            )
+                            3 -> TranscriptScreen(
+                                vm.transcript,
+                                vm.studentName,
+                                pageState,
+                                onRetry = { vm.refresh(page) },
+                                onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) }
+                            )
+                            else -> VoucherScreen(
+                                vouchers = vm.vouchers,
+                                downloadingVoucherNumber = vm.downloadingVoucherNumber,
+                                screenState = pageState,
+                                onRetry = { vm.refresh(page) },
+                                onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) },
+                                onDownload = { voucher -> vm.openVoucher(context, voucher) }
+                            )
+                        }
                     }
                 }
 
@@ -600,13 +661,6 @@ private val CapsuleSideInset = 18.dp
 
 /** Gap between the capsule and the bottom system edge. */
 private val CapsuleBottomInset = 12.dp
-
-/**
- * Height of the gradient fade drawn above the capsule.
- *
- * Softens the hard cut where list content meets the bar.
- */
-private val ScrollFadeHeight = 32.dp
 
 /** Horizontal padding inside the capsule, either side of the row. */
 private val CapsuleHorizontalPadding = 6.dp
@@ -648,24 +702,35 @@ private const val RIM_BOTTOM_ALPHA_LIGHT = 0.04f
 private val CapsuleRimWidth = 1.dp
 
 /**
- * Bottom inset shared by every authenticated list.
+ * Height of the gradient fade drawn above the capsule.
  *
- * A tab switch must not change how much scrollable room a list has, so this is
- * a plain function of the capsule geometry rather than a per-screen literal.
- * The system navigation inset is read at composition time: `enableEdgeToEdge`
- * is on, so the gesture bar is not already accounted for by the Scaffold.
+ * Softens the hard cut where list content meets the bar as it scrolls underneath.
+ */
+private val ScrollFadeHeight = 32.dp
+
+/** Extra visual gap between the last list item and the fade. */
+private val ListBottomGap = AppSpacing.Sm
+
+/**
+ * Bottom clearance for every authenticated list.
+ *
+ * The Scaffold no longer reserves the bottom bar for the pager viewport (the list
+ * scrolls behind the floating capsule), so each list must reserve the full bar band
+ * exactly once here: navigation-bar inset + capsule bottom spacing + capsule
+ * height + fade height + a small visual gap. Reserving it only in the lists (and
+ * not also via the Scaffold content padding) avoids the previous double-inset gap.
  */
 @Composable
-private fun listBottomInset(): androidx.compose.ui.unit.Dp {
+private fun listBottomClearance(): Dp {
     val navigationBar = WindowInsets.navigationBars
         .asPaddingValues()
         .calculateBottomPadding()
-    return AppSpacing.Md + CapsuleHeight + ScrollFadeHeight + navigationBar
+    return navigationBar + CapsuleBottomInset + CapsuleHeight + ScrollFadeHeight + ListBottomGap
 }
 
 /**
  * Destinations, in tab order. [NavDestinations.size] is what the pager and the
- * `when (tab)` dispatch below rely on, so the two must stay in lockstep.
+ * `when (page)` dispatch below rely on, so the two must stay in lockstep.
  */
 private val NavDestinations = listOf(
     NavDestination(Icons.Rounded.Event, "Schedule", "Sched.", "Schedule"),
@@ -710,14 +775,15 @@ private fun FloatingNavCapsule(
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
     useCompactLabels: Boolean,
-    showLabels: Boolean
+    showLabels: Boolean,
+    darkTheme: Boolean
 ) {
     val haptic = LocalHapticFeedback.current
     val containerColor = MaterialTheme.colorScheme.surface.copy(alpha = CAPSULE_FILL_ALPHA)
     // Dark mode needs a light rim: `surface` is already near-black there, so a
     // dark stroke would be invisible. Light mode needs a dark rim for the same
     // reason in reverse.
-    val isDark = isSystemInDarkTheme()
+    val isDark = darkTheme
     val rimBrush = Brush.verticalGradient(
         if (isDark) {
             listOf(
@@ -733,18 +799,41 @@ private fun FloatingNavCapsule(
         }
     )
 
+    // The root container deliberately has no background: the fade below must
+    // composite over the scrolling pager content so its transparent top
+    // reveals the list and its lower portion fades to the theme background.
+    // The opaque background lives on the capsule band only (on the Surface
+    // modifier chain below), where it blocks list content from showing
+    // through the capsule's translucent fill, its side gutters, or the
+    // system navigation area.
     Column(modifier = Modifier.fillMaxWidth()) {
-        // Scroll fade above the capsule: opaque theme background at the capsule's
-        // top edge fading to fully transparent upward, so list cards dissolve
-        // into the bar instead of being sliced by it. Drawn first so the capsule
-        // composites over it.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(ScrollFadeHeight)
+                // Consume pointer events in the fade area so they cannot reach
+                // list content scrolling underneath the bar band. This uses the
+                // resolved PointerInputEventHandler overload of pointerInput: the
+                // lambda runs in PointerInputScope, where awaitPointerEventScope
+                // exposes AwaitPointerEventScope.awaitPointerEvent. Placed after
+                // all layout modifiers so the handler's measured region covers
+                // the full band width and height. pointerInput adds no semantics,
+                // so no TalkBack action or focus target is introduced.
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            awaitPointerEvent().changes.forEach { change ->
+                                change.consume()
+                            }
+                        }
+                    }
+                }
                 .background(
                     Brush.verticalGradient(
-                        listOf(Color.Transparent, MaterialTheme.colorScheme.background)
+                        listOf(
+                            Color.Transparent,
+                            MaterialTheme.colorScheme.background
+                        )
                     )
                 )
         )
@@ -752,6 +841,38 @@ private fun FloatingNavCapsule(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
+                // Non-semantic full-width pointer barrier: consume every event
+                // in the capsule band so taps and drags cannot fall through to
+                // the list scrolling underneath. Uses the resolved
+                // PointerInputEventHandler overload of pointerInput — the lambda
+                // runs in PointerInputScope, so awaitPointerEventScope exposes
+                // AwaitPointerEventScope.awaitPointerEvent. Placed before the
+                // padding/inset modifiers below so its measured region spans the
+                // full band width including the side gutters (padding applied
+                // after pointerInput is inside the handler's region). pointerInput
+                // registers no semantics, so no inert TalkBack action is created;
+                // NavItem children keep their Role.Tab, label, and selected state
+                // and are dispatched before this ancestor in the Main pass.
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            awaitPointerEvent().changes.forEach { change ->
+                                change.consume()
+                            }
+                        }
+                    }
+                }
+                // Opaque theme background for the capsule band. Placed after
+                // the pointerInput barrier (so the barrier's hit region still
+                // spans the full band) and before the side/inset padding, so
+                // the paint wraps the 18dp side gutters, the bottom inset, and
+                // the system navigation area. This is what stops list content
+                // scrolling behind the band from showing through the capsule's
+                // translucent fill or the gutters beside it; the fade above
+                // intentionally has no such layer so it reveals the list.
+                .background(MaterialTheme.colorScheme.background)
+                // Inset the capsule from the screen edges. The barrier above
+                // still covers this 18dp strip because it wraps it.
                 .padding(start = CapsuleSideInset, end = CapsuleSideInset)
                 // Consume the gesture inset, then add it back as padding so the
                 // capsule body itself never sits under the home indicator.
@@ -783,12 +904,13 @@ private fun FloatingNavCapsule(
                     NavItem(
                         selected = index == selectedIndex,
                         onClick = {
-                            // Tick only on a real change; re-tapping the active
-                            // tab is a no-op and must not buzz.
+                            // Buzz only when the visible destination changes.
+                            // The tap itself always reaches the pager so a tap
+                            // during an animation can still redirect it.
                             if (index != selectedIndex) {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onSelect(index)
                             }
+                            onSelect(index)
                         },
                         icon = destination.icon,
                         label = if (useCompactLabels) destination.compactLabel else destination.label,
@@ -1089,7 +1211,8 @@ private fun ResultScreen(
     result: ExamResult?,
     studentName: String?,
     screenState: ScreenLoadState,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onPullRefresh: () -> Unit
 ) {
     if (result == null) {
         LoadStateContent("Loading latest result…", screenState, onRetry)
@@ -1103,72 +1226,79 @@ private fun ResultScreen(
     val highest = totals.maxOrNull()
     val aGrades = result.rows.count { it.grade.trim().uppercase().startsWith("A") }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(
-            start = ListGutter,
-            top = AppSpacing.Md,
-            end = ListGutter,
-            bottom = listBottomInset()
-        ),
-        verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
+    // Data-present branch only: `loading` here always means a refresh, never the first load.
+    PullToRefreshBox(
+        isRefreshing = screenState.loading,
+        onRefresh = onPullRefresh,
+        modifier = Modifier.fillMaxSize()
     ) {
-        item {
-            ScreenHeading(
-                title = "Academic result",
-                subtitle = result.title
-                    .replace("EXAM RESULT", "", ignoreCase = true)
-                    .trim(' ', '(', ')', '-')
-                    .ifBlank { "Latest examination" },
-                action = {
-                    Row {
-                        PolicyInfoButton()
-                        IconButton(
-                            onClick = {
-                                shareScope.launch {
-                                    runCatching { shareResultAsPng(context, studentName, result) }
-                                        .onFailure {
-                                            Toast.makeText(context, "Could not share result.", Toast.LENGTH_SHORT).show()
-                                        }
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = ListGutter,
+                top = AppSpacing.Md,
+                end = ListGutter,
+                bottom = listBottomClearance()
+            ),
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
+        ) {
+            item {
+                ScreenHeading(
+                    title = "Academic result",
+                    subtitle = result.title
+                        .replace("EXAM RESULT", "", ignoreCase = true)
+                        .trim(' ', '(', ')', '-')
+                        .ifBlank { "Latest examination" },
+                    action = {
+                        Row {
+                            PolicyInfoButton()
+                            IconButton(
+                                onClick = {
+                                    shareScope.launch {
+                                        runCatching { shareResultAsPng(context, studentName, result) }
+                                            .onFailure {
+                                                Toast.makeText(context, "Could not share result.", Toast.LENGTH_SHORT).show()
+                                            }
+                                    }
                                 }
+                            ) {
+                                Icon(Icons.Rounded.Share, "Share result")
                             }
-                        ) {
-                            Icon(Icons.Rounded.Share, "Share result")
                         }
                     }
+                )
+            }
+
+            item {
+                HeroMetricCard(
+                    label = "Semester GPA",
+                    value = result.gpa ?: "—",
+                    helper = "${result.rows.size} courses",
+                    icon = Icons.Rounded.AutoGraph
+                )
+            }
+
+            if (average != null) {
+                item {
+                    InsightRow(
+                        Triple("Average", formatOneDecimal(average), Icons.Rounded.QueryStats),
+                        Triple("Highest", formatOneDecimal(highest ?: average), Icons.Rounded.EmojiEvents),
+                        Triple("A grades", aGrades.toString(), Icons.Rounded.Grade)
+                    )
                 }
-            )
-        }
-
-        item {
-            HeroMetricCard(
-                label = "Semester GPA",
-                value = result.gpa ?: "—",
-                helper = "${result.rows.size} courses",
-                icon = Icons.Rounded.AutoGraph
-            )
-        }
-
-        if (average != null) {
-            item {
-                InsightRow(
-                    Triple("Average", formatOneDecimal(average), Icons.Rounded.QueryStats),
-                    Triple("Highest", formatOneDecimal(highest ?: average), Icons.Rounded.EmojiEvents),
-                    Triple("A grades", aGrades.toString(), Icons.Rounded.Grade)
-                )
             }
-        }
 
-        if (result.rows.isEmpty()) {
-            item {
-                EmptyState(
-                    Icons.Rounded.Assessment,
-                    "No result available",
-                    "Your result will appear here when it is published."
-                )
+            if (result.rows.isEmpty()) {
+                item {
+                    EmptyState(
+                        Icons.Rounded.Assessment,
+                        "No result available",
+                        "Your result will appear here when it is published."
+                    )
+                }
+            } else {
+                items(result.rows) { ResultCourseCard(it) }
             }
-        } else {
-            items(result.rows) { ResultCourseCard(it) }
         }
     }
 }
@@ -1219,10 +1349,12 @@ private fun SchedulesScreen(
     weeklySchedule: WeeklySchedule?,
     screenState: ScreenLoadState,
     onRetry: () -> Unit,
+    onPullRefresh: () -> Unit,
     snackbarHostState: SnackbarHostState,
     studentName: String?
 ) {
-    var selectedSubTab by remember { mutableIntStateOf(0) }
+    var selectedSubTab by rememberSaveable { mutableIntStateOf(0) }
+    val subTabStateHolder = rememberSaveableStateHolder()
 
     Column(modifier = Modifier.fillMaxSize()) {
         SingleChoiceSegmentedButtonRow(
@@ -1248,16 +1380,21 @@ private fun SchedulesScreen(
 
         Box(modifier = Modifier.weight(1f)) {
             if (selectedSubTab == 0) {
-                WeeklyScheduleContent(
-                    schedule = weeklySchedule,
-                    screenState = screenState,
-                    onRetry = onRetry,
-                    snackbarHostState = snackbarHostState,
-                    enabled = selectedSubTab == 0,
-                    studentName = studentName
-                )
+                subTabStateHolder.SaveableStateProvider("weekly") {
+                    WeeklyScheduleContent(
+                        schedule = weeklySchedule,
+                        screenState = screenState,
+                        onRetry = onRetry,
+                        onPullRefresh = onPullRefresh,
+                        snackbarHostState = snackbarHostState,
+                        enabled = selectedSubTab == 0,
+                        studentName = studentName
+                    )
+                }
             } else {
-                ExamScheduleContent(examSchedule, screenState, onRetry)
+                subTabStateHolder.SaveableStateProvider("exam") {
+                    ExamScheduleContent(examSchedule, screenState, onRetry, onPullRefresh)
+                }
             }
         }
     }
@@ -1267,57 +1404,65 @@ private fun SchedulesScreen(
 private fun ExamScheduleContent(
     schedule: ExamSchedule?,
     screenState: ScreenLoadState,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onPullRefresh: () -> Unit
 ) {
     if (schedule == null) {
         LoadStateContent("Loading exam schedule…", screenState, onRetry)
         return
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(
-            start = ListGutter,
-            top = AppSpacing.Md,
-            end = ListGutter,
-            bottom = listBottomInset()
-        ),
-        verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
+    // Data-present branch only: `loading` here always means a refresh, never the first load.
+    PullToRefreshBox(
+        isRefreshing = screenState.loading,
+        onRefresh = onPullRefresh,
+        modifier = Modifier.fillMaxSize()
     ) {
-        item {
-            ScreenHeading(
-                title = "Exam schedule",
-                subtitle = schedule.title.ifBlank { "Examination schedule" }
-            )
-        }
-
-        if (!schedule.notice.isNullOrBlank()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = ListGutter,
+                top = AppSpacing.Md,
+                end = ListGutter,
+                bottom = listBottomClearance()
+            ),
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
+        ) {
             item {
-                NoticeCard(message = schedule.notice)
-            }
-        }
-
-        item {
-            HeroMetricCard(
-                label = "Scheduled exams",
-                value = "${schedule.entries.size}",
-                helper = if (schedule.entries.isEmpty()) "No scheduled exams"
-                else "${schedule.entries.size} course examination${if (schedule.entries.size == 1) "" else "s"}",
-                icon = Icons.Rounded.Event
-            )
-        }
-
-        if (schedule.entries.isEmpty()) {
-            item {
-                EmptyState(
-                    icon = Icons.Rounded.EventAvailable,
-                    title = "No exam schedule",
-                    body = "Your examination schedule is not available at this time or no exams are scheduled."
+                ScreenHeading(
+                    title = "Exam schedule",
+                    subtitle = schedule.title.ifBlank { "Examination schedule" }
                 )
             }
-        } else {
-            items(schedule.entries) { entry ->
-                ExamScheduleCard(entry = entry)
+
+            if (!schedule.notice.isNullOrBlank()) {
+                item {
+                    NoticeCard(message = schedule.notice)
+                }
+            }
+
+            item {
+                HeroMetricCard(
+                    label = "Scheduled exams",
+                    value = "${schedule.entries.size}",
+                    helper = if (schedule.entries.isEmpty()) "No scheduled exams"
+                    else "${schedule.entries.size} course examination${if (schedule.entries.size == 1) "" else "s"}",
+                    icon = Icons.Rounded.Event
+                )
+            }
+
+            if (schedule.entries.isEmpty()) {
+                item {
+                    EmptyState(
+                        icon = Icons.Rounded.EventAvailable,
+                        title = "No exam schedule",
+                        body = "Your examination schedule is not available at this time or no exams are scheduled."
+                    )
+                }
+            } else {
+                items(schedule.entries) { entry ->
+                    ExamScheduleCard(entry = entry)
+                }
             }
         }
     }
@@ -1329,6 +1474,7 @@ private fun WeeklyScheduleContent(
     schedule: WeeklySchedule?,
     screenState: ScreenLoadState,
     onRetry: () -> Unit,
+    onPullRefresh: () -> Unit,
     snackbarHostState: SnackbarHostState,
     enabled: Boolean,
     studentName: String?
@@ -1344,7 +1490,7 @@ private fun WeeklyScheduleContent(
 
     val weekDays = listOf("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
     val classDays = groups.keys
-    var selectedDay by remember(schedule) { mutableStateOf<String?>(null) }
+    var selectedDay by rememberSaveable(schedule) { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
@@ -1381,7 +1527,9 @@ private fun WeeklyScheduleContent(
          * 2, not 3. The chips bar is no longer addressable as an index.
          */
         Surface(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = ListGutter),
             color = MaterialTheme.colorScheme.background
         ) {
             // Bottom cushion equals the list's `spacedBy(AppSpacing.Md)` gap.
@@ -1426,170 +1574,177 @@ private fun WeeklyScheduleContent(
             }
         }
 
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(
-                start = ListGutter,
-                // 0.dp: this list begins directly under the static chip bar, so
-                // any top padding would be a visible dead band between the bar
-                // and the first row. The 12.dp the screen wants below the status
-                // bar is carried by the heading item's own top padding.
-                top = 0.dp,
-                end = ListGutter,
-                bottom = listBottomInset()
-            ),
-            verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
+        // Data-present branch only: `loading` here always means a refresh, never the first load.
+        PullToRefreshBox(
+            isRefreshing = screenState.loading,
+            onRefresh = onPullRefresh,
+            modifier = Modifier.fillMaxWidth()
         ) {
-            // Heading and countdown are ordinary items and scroll away; the day
-            // labels below are the list's sticky rows and pin to this list's
-            // content edge, which is directly under the static chip bar.
-            item(key = ITEM_KEY_HEADING) {
-                // Carries what `contentPadding.top` used to hold, so the screen
-                // still starts 12.dp below the status bar without leaving a
-                // gap the day labels would scroll through.
-                Box(modifier = Modifier.padding(top = AppSpacing.Md)) {
-                    ScreenHeading(
-                        title = "Weekly class schedule",
-                        subtitle = schedule.title.ifBlank { "Your semester classes" },
-                        // Same slot the result and transcript screens use for
-                        // their share buttons, so the affordance reads
-                        // identically across the app. It lives here rather than
-                        // in the top app bar because this block only composes on
-                        // the "Weekly Classes" sub-tab, which is what scopes the
-                        // button to that view without threading the sub-tab
-                        // selection up to PortalTopBar.
-                        action = {
-                            IconButton(
-                                onClick = {
-                                    // `shareContext` is read at composition time,
-                                    // not inside this lambda: an onClick body is
-                                    // not a composable scope, so
-                                    // `LocalContext.current` cannot be called
-                                    // here. Holding it only for the life of this
-                                    // composition is what keeps the Activity
-                                    // from leaking into the ViewModel.
-                                    //
-                                    // `shareScope.launch` is required because the
-                                    // renderer is a suspend function: it allocates
-                                    // a ~10MB bitmap and PNG-compresses it on
-                                    // Dispatchers.Default. Launching on the
-                                    // composition scope also ties the job to this
-                                    // screen, so it is cancelled if the student
-                                    // leaves before the chooser appears.
-                                    shareScope.launch {
-                                        runCatching {
-                                            shareScheduleAsPng(shareContext, studentName, schedule)
-                                        }.onFailure {
-                                            Toast.makeText(
-                                                shareContext,
-                                                "Could not share schedule.",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(
+                    start = ListGutter,
+                    // 0.dp: this list begins directly under the static chip bar, so
+                    // any top padding would be a visible dead band between the bar
+                    // and the first row. The 12.dp the screen wants below the status
+                    // bar is carried by the heading item's own top padding.
+                    top = 0.dp,
+                    end = ListGutter,
+                    bottom = listBottomClearance()
+                ),
+                verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
+            ) {
+                // Heading and countdown are ordinary items and scroll away; the day
+                // labels below are the list's sticky rows and pin to this list's
+                // content edge, which is directly under the static chip bar.
+                item(key = ITEM_KEY_HEADING) {
+                    // Carries what `contentPadding.top` used to hold, so the screen
+                    // still starts 12.dp below the status bar without leaving a
+                    // gap the day labels would scroll through.
+                    Box(modifier = Modifier.padding(top = AppSpacing.Md)) {
+                        ScreenHeading(
+                            title = "Weekly class schedule",
+                            subtitle = schedule.title.ifBlank { "Your semester classes" },
+                            // Same slot the result and transcript screens use for
+                            // their share buttons, so the affordance reads
+                            // identically across the app. It lives here rather than
+                            // in the top app bar because this block only composes on
+                            // the "Weekly Classes" sub-tab, which is what scopes the
+                            // button to that view without threading the sub-tab
+                            // selection up to PortalTopBar.
+                            action = {
+                                IconButton(
+                                    onClick = {
+                                        // `shareContext` is read at composition time,
+                                        // not inside this lambda: an onClick body is
+                                        // not a composable scope, so
+                                        // `LocalContext.current` cannot be called
+                                        // here. Holding it only for the life of this
+                                        // composition is what keeps the Activity
+                                        // from leaking into the ViewModel.
+                                        //
+                                        // `shareScope.launch` is required because the
+                                        // renderer is a suspend function: it allocates
+                                        // a ~10MB bitmap and PNG-compresses it on
+                                        // Dispatchers.Default. Launching on the
+                                        // composition scope also ties the job to this
+                                        // screen, so it is cancelled if the student
+                                        // leaves before the chooser appears.
+                                        shareScope.launch {
+                                            runCatching {
+                                                shareScheduleAsPng(shareContext, studentName, schedule)
+                                            }.onFailure {
+                                                Toast.makeText(
+                                                    shareContext,
+                                                    "Could not share schedule.",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
                                         }
                                     }
+                                ) {
+                                    Icon(Icons.Rounded.Share, contentDescription = "Share schedule")
                                 }
-                            ) {
-                                Icon(Icons.Rounded.Share, contentDescription = "Share schedule")
                             }
-                        }
-                    )
-                }
-            }
-
-            item(key = ITEM_KEY_DASHBOARD) {
-                ScheduleFocusCard(
-                    focus = focusState.focus,
-                    secondsRemaining = focusState.secondsRemaining
-                )
-            }
-
-            if (groups.isEmpty()) {
-                item {
-                    EmptyState(
-                        icon = Icons.Rounded.EventAvailable,
-                        title = "No weekly schedule",
-                        body = "Your class schedule is not available on the IULMS portal right now."
-                    )
-                }
-            } else {
-                groups.forEach { (day, entries) ->
-                    // Sticky, and now genuinely permanent-looking: the chip bar that
-                    // used to evict these labels has been hoisted OUT of the
-                    // list, so this is the only sticky layer and nothing can
-                    // push it off. It pins to the list's content edge, which
-                    // sits directly beneath the static chip bar -- no modifier
-                    // offset needed, and none would work anyway, since a pin
-                    // position is decided by the LazyList layout rather than by
-                    // any modifier inside the slot.
-                    //
-                    // The dead full-width `background` shield that used to sit
-                    // here is gone: the pill is the only visible shape, and the
-                    // 20.dp of empty padding it contributed per day header went
-                    // with it.
-                    //
-                    // `CircleShape`: the pill is roughly 56x32dp, so its
-                    // half-height is ~16dp and a circular outline is a true
-                    // capsule end on both axes. A fixed `RoundedCornerShape`
-                    // would need hand-matching to that height and would drift
-                    // when the font scale changed.
-                    stickyHeader(key = dayLabelKey(day)) {
-                        // Invisible full-width shield. A pinned sticky header is
-                        // composed in a separate overlay layout drawn ON TOP of
-                        // the main item layer, so entry cards travel underneath
-                        // the day label. The pill alone covers only its own
-                        // ~56dp and cannot mask a 360dp scroll, so card titles
-                        // ghost straight through the day name without this.
-                        //
-                        // Fill is `background`, matching the list, so the mask is
-                        // invisible and only the pill reads as a shape.
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            color = MaterialTheme.colorScheme.background
-                        ) {
-                            Surface(
-                                modifier = Modifier.padding(
-                                    // ListGutter keeps the capsule's inset on
-                                    // the same 18.dp axis as every other row in
-                                    // this list.
-                                    horizontal = ListGutter,
-                                    // AppSpacing.Xs. NOTE: the list's
-                                    // `Arrangement.spacedBy(AppSpacing.Md)`
-                                    // gap is 12.dp, and `Arrangement` space is
-                                    // layout space this shield does NOT cover,
-                                    // so an 8.dp strip directly beneath the
-                                    // shield is still exposed while cards slide
-                                    // under it. AppSpacing.Md (12.dp) would close
-                                    // that seam completely at the cost of 16.dp
-                                    // more height per day header.
-                                    vertical = AppSpacing.Xs
-                                ),
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                                shape = CircleShape
-                            ) {
-                                Text(
-                                    text = day,
-                                    // 16.dp / 6.dp track the pill's type size.
-                                    // Neither is a spacing token; AppSpacing
-                                    // stops at 4.dp.
-                                    modifier = Modifier.padding(
-                                        horizontal = 16.dp,
-                                        vertical = 6.dp
-                                    ),
-                                    // titleSmall, not labelMedium: the day is the
-                                    // only orientation cue in a list of otherwise
-                                    // identical cards, so it is set at the size a
-                                    // reader scans for rather than the size a
-                                    // caption uses.
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
+                        )
                     }
-                    items(entries, key = { entry -> entryKey(day, entry) }) { entry ->
-                        WeeklyScheduleCard(entry)
+                }
+
+                item(key = ITEM_KEY_DASHBOARD) {
+                    ScheduleFocusCard(
+                        focus = focusState.focus,
+                        secondsRemaining = focusState.secondsRemaining
+                    )
+                }
+
+                if (groups.isEmpty()) {
+                    item {
+                        EmptyState(
+                            icon = Icons.Rounded.EventAvailable,
+                            title = "No weekly schedule",
+                            body = "Your class schedule is not available on the IULMS portal right now."
+                        )
+                    }
+                } else {
+                    groups.forEach { (day, entries) ->
+                        // Sticky, and now genuinely permanent-looking: the chip bar that
+                        // used to evict these labels has been hoisted OUT of the
+                        // list, so this is the only sticky layer and nothing can
+                        // push it off. It pins to the list's content edge, which
+                        // sits directly beneath the static chip bar -- no modifier
+                        // offset needed, and none would work anyway, since a pin
+                        // position is decided by the LazyList layout rather than by
+                        // any modifier inside the slot.
+                        //
+                        // The dead full-width `background` shield that used to sit
+                        // here is gone: the pill is the only visible shape, and the
+                        // 20.dp of empty padding it contributed per day header went
+                        // with it.
+                        //
+                        // `CircleShape`: the pill is roughly 56x32dp, so its
+                        // half-height is ~16dp and a circular outline is a true
+                        // capsule end on both axes. A fixed `RoundedCornerShape`
+                        // would need hand-matching to that height and would drift
+                        // when the font scale changed.
+                        stickyHeader(key = dayLabelKey(day)) {
+                            // Invisible full-width shield. A pinned sticky header is
+                            // composed in a separate overlay layout drawn ON TOP of
+                            // the main item layer, so entry cards travel underneath
+                            // the day label. The pill alone covers only its own
+                            // ~56dp and cannot mask a 360dp scroll, so card titles
+                            // ghost straight through the day name without this.
+                            //
+                            // Fill is `background`, matching the list, so the mask is
+                            // invisible and only the pill reads as a shape.
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                color = MaterialTheme.colorScheme.background
+                            ) {
+                                Surface(
+                                    modifier = Modifier.padding(
+                                        // ListGutter keeps the capsule's inset on
+                                        // the same 18.dp axis as every other row in
+                                        // this list.
+                                        horizontal = ListGutter,
+                                        // AppSpacing.Xs. NOTE: the list's
+                                        // `Arrangement.spacedBy(AppSpacing.Md)`
+                                        // gap is 12.dp, and `Arrangement` space is
+                                        // layout space this shield does NOT cover,
+                                        // so an 8.dp strip directly beneath the
+                                        // shield is still exposed while cards slide
+                                        // under it. AppSpacing.Md (12.dp) would close
+                                        // that seam completely at the cost of 16.dp
+                                        // more height per day header.
+                                        vertical = AppSpacing.Xs
+                                    ),
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                    shape = CircleShape
+                                ) {
+                                    Text(
+                                        text = day,
+                                        // 16.dp / 6.dp track the pill's type size.
+                                        // Neither is a spacing token; AppSpacing
+                                        // stops at 4.dp.
+                                        modifier = Modifier.padding(
+                                            horizontal = 16.dp,
+                                            vertical = 6.dp
+                                        ),
+                                        // titleSmall, not labelMedium: the day is the
+                                        // only orientation cue in a list of otherwise
+                                        // identical cards, so it is set at the size a
+                                        // reader scans for rather than the size a
+                                        // caption uses.
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                        items(entries, key = { entry -> entryKey(day, entry) }) { entry ->
+                            WeeklyScheduleCard(entry)
+                        }
                     }
                 }
             }
@@ -1869,7 +2024,24 @@ private fun rememberScheduleFocusState(
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var isLive by remember { mutableStateOf(false) }
 
-    LaunchedEffect(entries, enabled) {
+    // ON_RESUME resync. The composition (and its remembered state) survives
+    // backgrounding, so the effect below never re-runs when the app returns
+    // to the foreground — a class that started or ended while backgrounded
+    // would leave the card frozen at its pre-background value until the
+    // process is restarted. Bumping a tick key on ON_RESUME forces the same
+    // resolution to run again; the ticker keyed on `isLive` then starts or
+    // cancels itself off the freshly computed value.
+    var resumeTick by remember { mutableIntStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) resumeTick++
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    LaunchedEffect(entries, enabled, resumeTick) {
         if (!enabled) return@LaunchedEffect
         val initial = resolveScheduleFocus(
             entries = entries,
@@ -2105,7 +2277,8 @@ private fun scheduleDurationLabel(time: String): String? {
 private fun AttendanceScreen(
     attendance: AttendanceSummary?,
     screenState: ScreenLoadState,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onPullRefresh: () -> Unit
 ) {
     if (attendance == null) {
         LoadStateContent("Loading attendance…", screenState, onRetry)
@@ -2116,48 +2289,55 @@ private fun AttendanceScreen(
     val totalPresent = attendance.courses.sumOf { it.present }
     val percent = if (totalSessions > 0) (totalPresent * 100f / totalSessions).toInt() else 0
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(
-            start = ListGutter,
-            top = AppSpacing.Md,
-            end = ListGutter,
-            bottom = listBottomInset()
-        ),
-        verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
+    // Data-present branch only: `loading` here always means a refresh, never the first load.
+    PullToRefreshBox(
+        isRefreshing = screenState.loading,
+        onRefresh = onPullRefresh,
+        modifier = Modifier.fillMaxSize()
     ) {
-        item {
-            ScreenHeading(
-                title = "Attendance",
-                subtitle = "Course-wise sessions and class records"
-            )
-        }
-        item {
-            HeroMetricCard(
-                label = "Overall attendance",
-                value = if (totalSessions > 0) "$percent%" else "—",
-                helper = if (totalSessions > 0) "$totalPresent of $totalSessions sessions attended"
-                else "No attendance sessions recorded yet",
-                icon = Icons.AutoMirrored.Rounded.FactCheck
-            )
-        }
-        if (attendance.courses.isEmpty()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = ListGutter,
+                top = AppSpacing.Md,
+                end = ListGutter,
+                bottom = listBottomClearance()
+            ),
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
+        ) {
             item {
-                EmptyState(
-                    icon = Icons.AutoMirrored.Rounded.FactCheck,
-                    title = "No attendance data",
-                    body = "Course attendance is not available on the IULMS portal right now."
+                ScreenHeading(
+                    title = "Attendance",
+                    subtitle = "Course-wise sessions and class records"
                 )
             }
-        } else {
-            items(attendance.courses) { course -> AttendanceCourseCard(course) }
+            item {
+                HeroMetricCard(
+                    label = "Overall attendance",
+                    value = if (totalSessions > 0) "$percent%" else "—",
+                    helper = if (totalSessions > 0) "$totalPresent of $totalSessions sessions attended"
+                    else "No attendance sessions recorded yet",
+                    icon = Icons.AutoMirrored.Rounded.FactCheck
+                )
+            }
+            if (attendance.courses.isEmpty()) {
+                item {
+                    EmptyState(
+                        icon = Icons.AutoMirrored.Rounded.FactCheck,
+                        title = "No attendance data",
+                        body = "Course attendance is not available on the IULMS portal right now."
+                    )
+                }
+            } else {
+                items(attendance.courses) { course -> AttendanceCourseCard(course) }
+            }
         }
     }
 }
 
 @Composable
 private fun AttendanceCourseCard(course: AttendanceCourse) {
-    var expanded by remember(course.name) { mutableStateOf(false) }
+    var expanded by rememberSaveable(course.name) { mutableStateOf(false) }
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(AppRadius.Medium),
@@ -2401,6 +2581,7 @@ private fun VoucherScreen(
     downloadingVoucherNumber: String?,
     screenState: ScreenLoadState,
     onRetry: () -> Unit,
+    onPullRefresh: () -> Unit,
     onDownload: (Voucher) -> Unit
 ) {
     if (vouchers == null) {
@@ -2410,51 +2591,58 @@ private fun VoucherScreen(
 
     val totalOutstanding = vouchers.sumOf { parseMoney(it.amount) }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(
-            start = ListGutter,
-            top = AppSpacing.Md,
-            end = ListGutter,
-            bottom = listBottomInset()
-        ),
-        verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
+    // Data-present branch only: `loading` here always means a refresh, never the first load.
+    PullToRefreshBox(
+        isRefreshing = screenState.loading,
+        onRefresh = onPullRefresh,
+        modifier = Modifier.fillMaxSize()
     ) {
-        item {
-            ScreenHeading(
-                "Fee vouchers",
-                if (vouchers.isEmpty()) "No outstanding balance"
-                else "${vouchers.size} outstanding voucher${if (vouchers.size == 1) "" else "s"}"
-            )
-        }
-
-        if (vouchers.isNotEmpty()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = ListGutter,
+                top = AppSpacing.Md,
+                end = ListGutter,
+                bottom = listBottomClearance()
+            ),
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
+        ) {
             item {
-                HeroMetricCard(
-                    label = "Total outstanding",
-                    value = "Rs ${formatMoney(totalOutstanding)}",
-                    helper = nearestDueText(vouchers),
-                    icon = Icons.Rounded.AccountBalanceWallet
+                ScreenHeading(
+                    "Fee vouchers",
+                    if (vouchers.isEmpty()) "No outstanding balance"
+                    else "${vouchers.size} outstanding voucher${if (vouchers.size == 1) "" else "s"}"
                 )
             }
-        }
 
-        if (vouchers.isEmpty()) {
-            item {
-                EmptyState(
-                    Icons.Rounded.CheckCircle,
-                    "You're all clear",
-                    "There are no outstanding vouchers on your account."
-                )
+            if (vouchers.isNotEmpty()) {
+                item {
+                    HeroMetricCard(
+                        label = "Total outstanding",
+                        value = "Rs ${formatMoney(totalOutstanding)}",
+                        helper = nearestDueText(vouchers),
+                        icon = Icons.Rounded.AccountBalanceWallet
+                    )
+                }
             }
-        } else {
-            items(vouchers) { voucher ->
-                VoucherCard(
-                    voucher = voucher,
-                    downloading = downloadingVoucherNumber == voucher.number,
-                    downloadBusy = downloadingVoucherNumber != null,
-                    onDownload = { onDownload(voucher) }
-                )
+
+            if (vouchers.isEmpty()) {
+                item {
+                    EmptyState(
+                        Icons.Rounded.CheckCircle,
+                        "You're all clear",
+                        "There are no outstanding vouchers on your account."
+                    )
+                }
+            } else {
+                items(vouchers) { voucher ->
+                    VoucherCard(
+                        voucher = voucher,
+                        downloading = downloadingVoucherNumber == voucher.number,
+                        downloadBusy = downloadingVoucherNumber != null,
+                        onDownload = { onDownload(voucher) }
+                    )
+                }
             }
         }
     }
@@ -2544,7 +2732,8 @@ private fun TranscriptScreen(
     transcript: Transcript?,
     studentName: String?,
     screenState: ScreenLoadState,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onPullRefresh: () -> Unit
 ) {
     if (transcript == null) {
         LoadStateContent("Loading transcript…", screenState, onRetry)
@@ -2556,7 +2745,7 @@ private fun TranscriptScreen(
     val completed = remember(transcript) { completedHours(transcript.courses) }
     val remaining = remember(transcript) { remainingHours(transcript.courses) }
     val aGrades = transcript.courses.count { it.grade.trim().uppercase().startsWith("A") }
-    var weakOnly by remember(transcript) { mutableStateOf(false) }
+    var weakOnly by rememberSaveable(transcript) { mutableStateOf(false) }
 
     // IMPORTANT: Display the raw transcript rows exactly as returned by IULMS.
     // Do not deduplicate here; theory/lab rows can share similar course codes.
@@ -2568,109 +2757,116 @@ private fun TranscriptScreen(
         }
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(
-            start = ListGutter,
-            top = AppSpacing.Md,
-            end = ListGutter,
-            bottom = listBottomInset()
-        ),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+    // Data-present branch only: `loading` here always means a refresh, never the first load.
+    PullToRefreshBox(
+        isRefreshing = screenState.loading,
+        onRefresh = onPullRefresh,
+        modifier = Modifier.fillMaxSize()
     ) {
-        item {
-            ScreenHeading(
-                "Transcript",
-                "Academic record and degree progress",
-                action = {
-                    Row {
-                        PolicyInfoButton()
-                        IconButton(
-                            onClick = {
-                                shareScope.launch {
-                                    runCatching { shareTranscriptAsPng(context, studentName, transcript) }
-                                        .onFailure {
-                                            Toast.makeText(context, "Could not share transcript.", Toast.LENGTH_SHORT).show()
-                                        }
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = ListGutter,
+                top = AppSpacing.Md,
+                end = ListGutter,
+                bottom = listBottomClearance()
+            ),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                ScreenHeading(
+                    "Transcript",
+                    "Academic record and degree progress",
+                    action = {
+                        Row {
+                            PolicyInfoButton()
+                            IconButton(
+                                onClick = {
+                                    shareScope.launch {
+                                        runCatching { shareTranscriptAsPng(context, studentName, transcript) }
+                                            .onFailure {
+                                                Toast.makeText(context, "Could not share transcript.", Toast.LENGTH_SHORT).show()
+                                            }
+                                    }
                                 }
+                            ) {
+                                Icon(Icons.Rounded.Share, "Share transcript")
                             }
-                        ) {
-                            Icon(Icons.Rounded.Share, "Share transcript")
                         }
                     }
-                }
-            )
-        }
+                )
+            }
 
-        item {
-            HeroMetricCard(
-                "Cumulative GPA",
-                transcript.cgpa.ifBlank { "—" },
-                "${transcript.courses.size} transcript entries",
-                Icons.Rounded.School
-            )
-        }
+            item {
+                HeroMetricCard(
+                    "Cumulative GPA",
+                    transcript.cgpa.ifBlank { "—" },
+                    "${transcript.courses.size} transcript entries",
+                    Icons.Rounded.School
+                )
+            }
 
-        item {
-            CreditProgressCard(completed = completed, remaining = remaining)
-        }
+            item {
+                CreditProgressCard(completed = completed, remaining = remaining)
+            }
 
-        item {
-            InsightRow(
-                Triple("Credits", completed.toString(), Icons.AutoMirrored.Rounded.MenuBook),
-                Triple("Entries", transcript.courses.size.toString(), Icons.AutoMirrored.Rounded.LibraryBooks),
-                Triple("A grades", aGrades.toString(), Icons.Rounded.Grade)
-            )
-        }
+            item {
+                InsightRow(
+                    Triple("Credits", completed.toString(), Icons.AutoMirrored.Rounded.MenuBook),
+                    Triple("Entries", transcript.courses.size.toString(), Icons.AutoMirrored.Rounded.LibraryBooks),
+                    Triple("A grades", aGrades.toString(), Icons.Rounded.Grade)
+                )
+            }
 
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Courses & labs", style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        if (weakOnly) "${visibleCourses.size} weak/critical entries"
-                        else "All transcript entries returned by IULMS",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Courses & labs", style = MaterialTheme.typography.titleLarge)
+                        Text(
+                            if (weakOnly) "${visibleCourses.size} weak/critical entries"
+                            else "All transcript entries returned by IULMS",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    FilterChip(
+                        selected = weakOnly,
+                        onClick = { weakOnly = !weakOnly },
+                        label = { Text("Weak only") },
+                        leadingIcon = if (weakOnly) {
+                            { Icon(Icons.Rounded.FilterAlt, null, Modifier.size(18.dp)) }
+                        } else null
                     )
                 }
-                FilterChip(
-                    selected = weakOnly,
-                    onClick = { weakOnly = !weakOnly },
-                    label = { Text("Weak only") },
-                    leadingIcon = if (weakOnly) {
-                        { Icon(Icons.Rounded.FilterAlt, null, Modifier.size(18.dp)) }
-                    } else null
-                )
             }
-        }
 
-        if (visibleCourses.isEmpty()) {
+            if (visibleCourses.isEmpty()) {
+                item {
+                    EmptyState(
+                        Icons.Rounded.CheckCircle,
+                        if (weakOnly) "No weak courses" else "No transcript entries",
+                        if (weakOnly) "No C-grade or lower entries were found."
+                        else "Transcript entries will appear here when returned by IULMS."
+                    )
+                }
+            } else {
+                items(visibleCourses) { TranscriptCourseCard(it) }
+            }
+
             item {
-                EmptyState(
-                    Icons.Rounded.CheckCircle,
-                    if (weakOnly) "No weak courses" else "No transcript entries",
-                    if (weakOnly) "No C-grade or lower entries were found."
-                    else "Transcript entries will appear here when returned by IULMS."
+                Text(
+                    "MyIULMS is an unofficial student-made client and is not affiliated with or endorsed by Iqra University.",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp, bottom = 8.dp),
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        } else {
-            items(visibleCourses) { TranscriptCourseCard(it) }
-        }
-
-        item {
-            Text(
-                "MyIULMS is an unofficial student-made client and is not affiliated with or endorsed by Iqra University.",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp, bottom = 8.dp),
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
     }
 }
