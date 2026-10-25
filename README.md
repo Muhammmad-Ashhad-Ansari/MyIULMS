@@ -73,6 +73,12 @@ The app signs in to the existing portal, keeps session cookies in memory, fetche
 
 Because it depends on IULMS page structures and endpoints, portal changes may require updates to the network or parsing code.
 
+### How MyIULMS handles sign-in and portal data
+
+**[View the interactive guide](https://muhammmad-ashhad-ansari.github.io/MyIULMS/)** — a short, self-contained
+walkthrough of the app → portal → app flow. It shows that sign-in is sent directly to `iulms.edu.pk` over
+HTTPS, with no separate MyIULMS server in between. The guide uses invented sample data and sends no network requests.
+
 ---
 
 ## Build and run
