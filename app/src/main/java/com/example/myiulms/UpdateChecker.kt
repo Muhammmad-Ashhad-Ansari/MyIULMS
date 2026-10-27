@@ -8,7 +8,10 @@ import java.util.concurrent.TimeUnit
 
 internal data class LatestAppRelease(
     val version: String,
-    val releaseUrl: String
+    val releaseUrl: String,
+    // Release ka markdown body — usi response se jo pehle se aata hai (koi extra
+    // request nahi; shared-IP rate limit ke liye zaroori, AI_HANDOFF §8).
+    val notes: String = ""
 )
 
 internal sealed interface UpdateCheckState {
@@ -49,12 +52,13 @@ private object GitHubReleaseClient {
             val release = JSONObject(body)
             val version = release.optString("tag_name").trim()
             val releaseUrl = release.optString("html_url").trim()
+            val notes = release.optString("body").trim()
 
             if (version.isBlank() || !releaseUrl.startsWith(PUBLIC_RELEASE_PREFIX)) {
                 throw IOException("GitHub returned invalid release details")
             }
 
-            return LatestAppRelease(version = version, releaseUrl = releaseUrl)
+            return LatestAppRelease(version = version, releaseUrl = releaseUrl, notes = notes)
         }
     }
 }
@@ -80,3 +84,54 @@ private fun versionParts(version: String): List<Int> = version
     .removePrefix("V")
     .split('.')
     .map { part -> part.takeWhile(Char::isDigit).toIntOrNull() ?: 0 }
+
+// ---------------- Release notes preview (pure, unit-tested) ----------------
+
+internal data class ReleaseNotesPreview(val items: List<String>, val remaining: Int)
+
+// Release body (markdown) → chhoti "What's new" list. Hamare release notes ka
+// format: `## What's new` ke neeche bullets, har bullet `**Title** — detail`.
+// Sirf title dikhate hain (dialog mein jagah kam); "What's new" section na mile to
+// poore body ke bullets — magar `Notes`/checksum jaise sections chhod kar.
+internal fun releaseNotesPreview(body: String, max: Int = 5): ReleaseNotesPreview {
+    val lines = body.lines()
+    val headingIndexes = lines.indices.filter { lines[it].trimStart().startsWith("#") }
+    val whatsNew = headingIndexes.firstOrNull { index ->
+        val heading = lines[index].lowercase()
+        "new" in heading || "change" in heading || "highlight" in heading
+    }
+    val bulletLines = if (whatsNew != null) {
+        val end = headingIndexes.firstOrNull { it > whatsNew } ?: lines.size
+        lines.subList(whatsNew + 1, end)
+    } else {
+        var skipping = false
+        lines.filter { line ->
+            val trimmed = line.trimStart()
+            if (trimmed.startsWith("#")) {
+                val heading = trimmed.lowercase()
+                skipping = "note" in heading || "checksum" in heading || "sha" in heading
+                false
+            } else {
+                !skipping
+            }
+        }
+    }
+    val items = bulletLines
+        .map { it.trim() }
+        .filter { it.startsWith("- ") || it.startsWith("* ") || it.matches(Regex("""\d+[.)] .*""")) }
+        .map { cleanReleaseNoteItem(it) }
+        .filter { it.isNotBlank() }
+    return ReleaseNotesPreview(items.take(max), (items.size - max).coerceAtLeast(0))
+}
+
+private fun cleanReleaseNoteItem(line: String): String {
+    val text = line.replaceFirst(Regex("""^([-*]|\d+[.)])\s+"""), "")
+    // `**Title** — detail` → sirf Title.
+    Regex("""^\*\*(.+?)\*\*""").find(text)?.let { return it.groupValues[1].trim() }
+    val plain = text
+        .replace(Regex("""\[(.+?)]\(.+?\)"""), "$1") // [text](url) → text
+        .replace("**", "")
+        .replace("`", "")
+        .trim()
+    return if (plain.length <= 80) plain else plain.take(77).trimEnd() + "…"
+}

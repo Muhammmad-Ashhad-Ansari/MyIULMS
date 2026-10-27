@@ -19,7 +19,7 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
-    private val client = IulmsClient()
+    private val client = IulmsSession.client
     private val store = SecureStore(app)
     private var updateCheckJob: Job? = null
     private val sharedPreferences: SharedPreferences
@@ -31,6 +31,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var automaticCheckClaimedInWindow = false
 
     var loggedIn by mutableStateOf(false)
+        private set
+    // App-level faculty-evaluation gate flag. Sirf detection layer set karta hai;
+    // clear sirf logout ya onEvaluationReturned() karta hai. Session expire nahi
+    // hua hota is waqt — loggedIn alag rehta hai.
+    var evaluationRequired by mutableStateOf(false)
         private set
     var loading by mutableStateOf(false)
         private set
@@ -151,6 +156,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 block()
                 onSuccess?.invoke()
+            } catch (e: EvaluationRequiredException) {
+                // Defensive net: doLogin gate khud handle karta hai (remember-me
+                // save ke saath). Yahan bas flag ensure hota hai; loggedIn jo
+                // hai wahi rehta hai — gate session-expiry nahi hai.
+                evaluationRequired = true
             } catch (e: NotLoggedInException) {
                 errorMsg = "Session expired. Please sign in again."
                 loggedIn = false
@@ -170,17 +180,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (screenLoadStates[screen]?.loading == true) return
 
         viewModelScope.launch {
-            updateScreenState(screen) { it.copy(loading = true, error = null) }
+            updateScreenState(screen) { screenStateLoading(it) }
             try {
                 block()
                 val now = System.currentTimeMillis()
-                updateScreenState(screen) { it.copy(loading = false, error = null) }
+                updateScreenState(screen) { screenStateSuccess() }
                 if (showRefreshFeedback) lastUpdatedAt = now
+            } catch (e: EvaluationRequiredException) {
+                // Gate = actionable state, error NAHI: errorMsg (global banner) par
+                // nahi chadhta, taake UI "Connection problem" na dikhaye.
+                // Screen state ke through hi "Faculty evaluations required" card aata hai.
+                evaluationRequired = true
+                updateScreenState(screen) { screenStateGate() }
             } catch (e: NotLoggedInException) {
                 val message = "Session expired. Please sign in again."
                 errorMsg = message
                 loggedIn = false
-                updateScreenState(screen) { it.copy(loading = false, error = message) }
+                updateScreenState(screen) { screenStateError(message) }
             } catch (_: Exception) {
                 val name = when (screen) {
                     0 -> "schedule"
@@ -190,10 +206,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     else -> "vouchers"
                 }
                 updateScreenState(screen) {
-                    it.copy(
-                        loading = false,
-                        error = "Couldn't load $name. Check your connection and try again."
-                    )
+                    screenStateError("Couldn't load $name. Check your connection and try again.")
                 }
             }
         }
@@ -205,16 +218,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun doLogin(user: String, pass: String, remember: Boolean) {
+        var gatedDuringHomeFetch = false
         val loginResult = withContext(Dispatchers.IO) {
             val ok = client.login(user, pass)
 
             if (!ok) {
                 Pair(false, null)
             } else {
-                val homeHtml = client.getHtml("/")
-                Pair(true, parseStudentName(homeHtml))
+                try {
+                    val homeHtml = client.getHtml("/")
+                    Pair(true, parseStudentName(homeHtml))
+                } catch (e: EvaluationRequiredException) {
+                    // Login kaamyab lekin home par gate redirect: yahan rokna zaroori
+                    // hai, warna neeche ka remember-me save aur loggedIn=true chhut
+                    // jate. Naam gate ke baad onEvaluationReturned() se wapas aata hai.
+                    gatedDuringHomeFetch = true
+                    Pair(true, null)
+                }
             }
         }
+
+        if (gatedDuringHomeFetch) evaluationRequired = true
 
         val ok = loginResult.first
         val name = loginResult.second
@@ -258,6 +282,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         transcript = null
         studentName = null
         errorMsg = null
+        evaluationRequired = false
         loggedIn = false
     }
 
@@ -328,6 +353,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
                     context.startActivity(intent)
                 }
+            } catch (e: EvaluationRequiredException) {
+                // Gate active: koi misleading voucher error nahi — screen-4 ka
+                // gate card hi yahan sahi affordance hai.
+                evaluationRequired = true
+                updateScreenState(4) { screenStateGate() }
+                voucherActionError = null
             } catch (e: NotLoggedInException) {
                 voucherActionError = "Session expired. Please sign in again."
                 errorMsg = "Session expired. Please sign in again."
@@ -365,6 +396,52 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             else -> loadVouchers(showRefreshFeedback)
         }
     }
+
+    // EvaluationActivity launch se pehle koi session-handover step nahi hai:
+    // 100% native evaluation flow abhi bhi client ke apne OkHttp SessionCookieJar
+    // se authenticated requests bhe deta hai (WebView bridge abhi bhi exist hi
+    // nahi karta). EvaluationActivity khud gate list / course form / CAPTCHA le
+    // lega. Return par onEvaluationReturned() re-probe karta hai.
+
+    // EvaluationActivity se wapas aane par strict reset. Models null taake koi
+    // stale empty screen (gate ke dauran parse hue khaali models) zinda na rahe;
+    // screen states cleared; naam re-fetch (doLogin me gate par chhut jata hai);
+    // aur active tab ka hard refresh = fresh portal re-probe. Agar evaluation
+    // abhi bhi baaki hai (partial completion) to yehi load dobara
+    // EvaluationRequiredException throw karke gate card wapas laga dega —
+    // completion ka koi guess nahi, har return par asli re-probe.
+    fun onEvaluationReturned(activeTab: Int) {
+        evaluationRequired = false
+        errorMsg = null
+        examResult = null
+        examSchedule = null
+        weeklySchedule = null
+        attendance = null
+        vouchers = null
+        transcript = null
+        studentName = null
+        screenLoadStates = emptyMap()
+        refreshStudentName()
+        refresh(activeTab, showRefreshFeedback = false)
+    }
+
+    // Gate ke dauran doLogin ka naam-fetch chhod jata hai — wapas aane par yahan
+    // se wapas lao. Yahan har failure silent hai (naam cosmetic hai): gate ya
+    // session error asli tab-load path se hi dikhte hain.
+    private fun refreshStudentName() {
+        viewModelScope.launch {
+            val name = withContext(Dispatchers.IO) {
+                try {
+                    parseStudentName(client.getHtml("/"))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+            }
+            studentName = name
+        }
+    }
 }
 
 private fun Throwable.toSignInErrorMessage(): String {
@@ -387,5 +464,25 @@ private fun Throwable.toSignInErrorMessage(): String {
 
 data class ScreenLoadState(
     val loading: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    // "Faculty evaluations required" — loading/error se mutually exclusive.
+    // Gate ke waqt error NULL rehta hai, taake UI Connection problem na dikhaye.
+    val portalActionRequired: Boolean = false
 )
+
+// ---------------- Screen-load state transitions (pure, unit-tested) ----------------
+// Har transition inhi helpers se guzarta hai (GateStateTransitionTest) — is tarah
+// loading / error / gate kabhi ek saath active nahi ho sakte: ek screen par ek
+// waqt par in teeno mein se exactly ek hota hai.
+
+internal fun screenStateLoading(previous: ScreenLoadState): ScreenLoadState =
+    previous.copy(loading = true, error = null, portalActionRequired = false)
+
+internal fun screenStateSuccess(): ScreenLoadState =
+    ScreenLoadState(loading = false, error = null, portalActionRequired = false)
+
+internal fun screenStateError(message: String): ScreenLoadState =
+    ScreenLoadState(loading = false, error = message, portalActionRequired = false)
+
+internal fun screenStateGate(): ScreenLoadState =
+    ScreenLoadState(loading = false, error = null, portalActionRequired = true)

@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="Release v1.0.7" src="https://img.shields.io/badge/Release-v1.0.7-3fb950?style=for-the-badge">
+  <img alt="Release v1.1.0" src="https://img.shields.io/badge/Release-v1.1.0-3fb950?style=for-the-badge">
   <img alt="Target SDK 37" src="https://img.shields.io/badge/Target%20SDK-Android%2037-3DDC84?style=for-the-badge&logo=android&logoColor=white">
   <img alt="74 unit tests passing" src="https://img.shields.io/badge/Unit%20Tests-74%20passing-3fb950?style=for-the-badge">
   <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/blob/main/LICENSE">
@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/tag/v1.0.7"><strong>⬇ Download v1.0.7 APK</strong></a>
+  <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/tag/v1.1.0"><strong>⬇ Download v1.1.0 APK</strong></a>
   ·
   <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/issues">Report an issue</a>
 </p>

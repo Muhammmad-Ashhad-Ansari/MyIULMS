@@ -28,6 +28,18 @@
             android:label="Voucher"
             android:theme="@style/Theme.MyIULMS" />
 
+        <!-- Faculty evaluation gate: 100% native evaluation flow (gate list ->
+             course form -> CAPTCHA -> native POST via OkHttp). configChanges
+             rotation/screenSize isliye taake user ka aadha bhara hua form
+             rotation par na reset ho — activity recreate nahi hoti. -->
+        <activity
+            android:name=".EvaluationActivity"
+            android:windowSoftInputMode="adjustResize"
+            android:exported="false"
+            android:label="Course evaluations"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:theme="@style/Theme.MyIULMS" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

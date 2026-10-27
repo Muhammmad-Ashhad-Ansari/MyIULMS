@@ -1,13 +1,14 @@
 package com.example.myiulms
 
-import android.content.res.Configuration
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.edit
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -72,6 +73,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -115,19 +117,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         val uiPrefs = getSharedPreferences("iulms_ui", MODE_PRIVATE)
-        val systemDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-            Configuration.UI_MODE_NIGHT_YES
 
         setContent {
-            var darkTheme by remember {
-                mutableStateOf(
-                    if (uiPrefs.contains("dark_theme")) {
-                        uiPrefs.getBoolean("dark_theme", systemDark)
-                    } else {
-                        systemDark
-                    }
-                )
-            }
+            var darkTheme by remember { mutableStateOf(resolveSavedDarkTheme(this)) }
 
             MyIULMSTheme(darkTheme = darkTheme) {
                 Surface(
@@ -504,7 +496,24 @@ private fun HomeScreen(
     val context = LocalContext.current
     val policyState = rememberAcademicPolicyState()
 
-    CompositionLocalProvider(LocalAcademicPolicyState provides policyState) {
+    // Faculty evaluation gate: 100% native evaluation flow kholta hai —
+    // EvaluationActivity khud apni OkHttp session se gate list / course form /
+    // CAPTCHA fetch karta hai (WebView koi nahi). Return par EvaluationActivity
+    // hamesha RESULT_OK bhejta hai aur system back/cancel case me bhi
+    // onEvaluationReturned() re-probe karta hai — portal ka response hi gate
+    // state ka single source of truth hai.
+    val evaluationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        vm.onEvaluationReturned(settledPage)
+    }
+
+    CompositionLocalProvider(
+        LocalAcademicPolicyState provides policyState,
+        LocalEvaluationGateAction provides {
+            evaluationLauncher.launch(Intent(context, EvaluationActivity::class.java))
+        }
+    ) {
         Scaffold(
             topBar = {
                 PortalTopBar(
@@ -1147,17 +1156,34 @@ private fun UpdateCheckDialog(
     onRetry: () -> Unit,
     onOpenRelease: (String) -> Unit
 ) {
+    // Update available = alag, high-contrast celebratory dialog (UpdateAvailableDialog.kt).
+    // Baaki states (up to date / failed / checking) yahin ka calm AlertDialog.
+    if (state is UpdateCheckState.Available) {
+        UpdateAvailableDialog(
+            currentVersion = state.currentVersion,
+            latest = state.latest,
+            onUpdate = { onOpenRelease(state.latest.releaseUrl) },
+            onLater = onDismiss
+        )
+        return
+    }
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = {
             Icon(
                 when (state) {
-                    is UpdateCheckState.Available -> Icons.Rounded.SystemUpdate
                     is UpdateCheckState.UpToDate -> Icons.Rounded.CheckCircle
                     is UpdateCheckState.Failed -> Icons.Rounded.CloudOff
-                    UpdateCheckState.Checking -> Icons.Rounded.SystemUpdate
+                    else -> Icons.Rounded.SystemUpdate
                 },
-                contentDescription = null
+                contentDescription = null,
+                // Up to date: halka green tick — calm, celebratory nahi.
+                tint = if (state is UpdateCheckState.UpToDate) {
+                    if (dark) GradeStrongDark else GradeStrongLight
+                } else {
+                    MaterialTheme.colorScheme.secondary
+                }
             )
         },
         title = {
@@ -1175,7 +1201,10 @@ private fun UpdateCheckDialog(
                 is UpdateCheckState.Available -> Text(
                     "Version ${state.latest.version} is available. You're using version ${state.currentVersion}."
                 )
-                is UpdateCheckState.UpToDate -> Text("You're using the latest version (${state.currentVersion}).")
+                is UpdateCheckState.UpToDate -> Text(
+                    "You're running the latest version (${displayVersion(state.currentVersion)}).",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 is UpdateCheckState.Failed -> Text(state.message)
                 UpdateCheckState.Checking -> Row(
                     horizontalArrangement = Arrangement.spacedBy(AppSpacing.Md),
@@ -3384,6 +3413,82 @@ private fun EmptyState(icon: ImageVector, title: String, body: String) {
     }
 }
 
+// Faculty-evaluation gate card ka action — HomeScreen isse provide karta hai
+// (EvaluationActivity launcher). CompositionLocal isliye taake paancho screens
+// ke signatures me onGateAction na jhoolna pade (LoadStateContent ek hi jagah
+// se sab cover karta hai).
+val LocalEvaluationGateAction = staticCompositionLocalOf<() -> Unit> { {} }
+
+// "Evaluations required" — actionable state, error nahi. Portal har authenticated
+// page ko gate par redirect karta hai jab tak student saare pending course
+// evaluations complete nahi karta. Is card ke neeche ka data genuinely
+// inaccessible hai — yeh dikhana hi sahi affordance hai, khaali screen ya
+// "Connection problem" nahi.
+@Composable
+private fun FacultyEvaluationGateState(onGateAction: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { liveRegion = LiveRegionMode.Polite },
+            shape = RoundedCornerShape(AppRadius.Large),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
+            ) {
+                Icon(
+                    Icons.Rounded.Assessment,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+                Text(
+                    text = "Evaluations required",
+                    style = MaterialTheme.typography.titleMedium,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    text = "Complete your pending course evaluations to unlock your academic records.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+                Button(
+                    onClick = onGateAction,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                    shape = RoundedCornerShape(AppRadius.Medium)
+                ) {
+                    Icon(Icons.AutoMirrored.Rounded.MenuBook, contentDescription = null)
+                    Spacer(Modifier.width(AppSpacing.Sm))
+                    Text("Start evaluations")
+                }
+            }
+        }
+    }
+}
+
+// Headless render target for the gate card (native-flow preview, `android
+// preview`). Surface theme wrapper app ke dark/light default par chalta hai.
+@Preview(showBackground = true, widthDp = 412, heightDp = 892)
+@Composable
+private fun FacultyEvaluationGateStatePreview() {
+    MyIULMSTheme(darkTheme = false) {
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            FacultyEvaluationGateState(onGateAction = {})
+        }
+    }
+}
+
 @Composable
 private fun LoadingPlaceholder(text: String) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -3404,6 +3509,15 @@ private fun LoadStateContent(
     state: ScreenLoadState,
     onRetry: () -> Unit
 ) {
+    // Priority order: gate card SABSE PEHLE. Gate ke waqt error null hota hai
+    // (mutual exclusivity, GateStateTransitionTest) aur data bhi null hota hai
+    // (onEvaluationReturned ne models null kiye) — warna UI "Connection problem"
+    // ya infinite loading dikhata, jo misleading hota. Yeh ek hi jagah se paancho
+    // screens (schedule/attendance/result/transcript/vouchers) cover ho jate hain.
+    if (state.portalActionRequired) {
+        FacultyEvaluationGateState(onGateAction = LocalEvaluationGateAction.current)
+        return
+    }
     val error = state.error
     if (error == null) {
         LoadingPlaceholder(loadingText)
