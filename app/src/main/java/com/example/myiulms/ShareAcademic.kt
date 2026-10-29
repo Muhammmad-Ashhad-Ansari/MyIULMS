@@ -126,21 +126,23 @@ suspend fun shareScheduleAsPng(
         studentName = studentName,
         metricLabel = "This week",
         metricValue = if (classCount == 0) "—" else "$classCount",
-        headers = listOf("Day", "Time", "Course", "Room"),
+        headers = listOf("Day", "Time", "Course", "Faculty", "Room"),
         rows = rows,
-        columnWidths = listOf(.12f, .17f, .45f, .13f),
+        columnWidths = listOf(.08f, .24f, .30f, .26f, .12f),
         generatedOn = now
     )
 }
 
 /**
- * One schedule row as the four display strings the table renderer draws.
+ * One schedule row as the five display strings the table renderer draws.
  *
- * A row is three visual bands rather than four columns: the time and the course
- * title each get their own line, so the course column carries the code and the
- * faculty beneath the title.
+ * Columns: Day, Time, Course, Faculty, Room.
+ *
+ * The Course cell holds only the pure course title (no course code, no dot
+ * separator). Faculty lives in its own dedicated cell, title-cased via
+ * [formatShareName]. Blank optional fields degrade to an em dash.
  */
-private fun scheduleRow(day: String, entry: WeeklyScheduleEntry): List<String> {
+internal fun scheduleRow(day: String, entry: WeeklyScheduleEntry): List<String> {
     val title = entry.courseTitle.trim().ifBlank { "Class" }
     val interval = parseScheduleInterval(entry.time)
     val time = if (interval == null) {
@@ -152,24 +154,17 @@ private fun scheduleRow(day: String, entry: WeeklyScheduleEntry): List<String> {
             formatWallClock(interval.endMinuteOfDay)
     }
 
-    val course = buildString {
-        append(title)
-        // Code and faculty share the course cell; the code is the identifier a
-        // classmate would search on, the faculty is the tiebreaker when two
-        // sections of the same course meet at once.
-        val code = entry.courseCode.trim()
-        val faculty = entry.faculty.trim()
-        if (code.isNotBlank()) {
-            append("  ·  ")
-            append(code)
-        }
-        if (faculty.isNotBlank()) {
-            append("  ·  ")
-            append(formatShareName(faculty))
-        }
-    }
+    val cleanCourse = title
 
-    return listOf(day, time, course, entry.location.trim())
+    val formattedFaculty = formatShareName(entry.faculty.trim()).ifBlank { "—" }
+
+    return listOf(
+        day,
+        time,
+        cleanCourse,
+        formattedFaculty,
+        entry.location.trim().ifBlank { "—" }
+    )
 }
 
 private suspend fun shareAcademicTable(
@@ -288,7 +283,7 @@ private suspend fun shareAcademicTable(
                 x = colStarts[colIndex] + 18f,
                 baseline = yTop + 55f,
                 maxWidth = maxWidth,
-                size = if (colIndex == 0) 24f else 25f,
+                size = if (colIndex == 0) 20f else 21f,
                 color = text,
                 bold = colIndex == 2
             )
