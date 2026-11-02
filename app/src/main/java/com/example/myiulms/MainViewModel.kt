@@ -12,6 +12,8 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.myiulms.data.PortalRepository
+import com.example.myiulms.ui.widget.NextClassWidgetSession
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -36,6 +38,7 @@ sealed interface PhotoState {
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val client = IulmsSession.client
     private val store = SecureStore(app)
+    private val portal = PortalRepository(app)
     private var updateCheckJob: Job? = null
     private val sharedPreferences: SharedPreferences
         get() = getApplication<Application>().getSharedPreferences("myilms_update_check", Context.MODE_PRIVATE)
@@ -45,8 +48,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val KEY_LAST_AUTOMATIC_CHECK = "last_automatic_check_ms"
     private var automaticCheckClaimedInWindow = false
 
-    var loggedIn by mutableStateOf(false)
-        private set
+    // Har sign-in/sign-out (logout, session expiry, naya account) yahin se
+    // guzarta hai, isliye widget ko yahin batate hain.
+    private var loggedInState by mutableStateOf(false)
+    var loggedIn: Boolean
+        get() = loggedInState
+        private set(value) {
+            loggedInState = value
+            NextClassWidgetSession.onAuthChanged(getApplication(), value)
+        }
     // App-level faculty-evaluation gate flag. Sirf detection layer set karta hai;
     // clear sirf logout ya onEvaluationReturned() karta hai. Session expire nahi
     // hua hota is waqt — loggedIn alag rehta hai.
@@ -281,6 +291,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 savedPassword = null
             }
 
+            // Before loggedIn: the widget must never render another account's cache.
+            withContext(Dispatchers.IO) { portal.setActiveOwner(user, persist = remember) }
             loggedIn = true
         } else {
             errorMsg = "Sign in failed. Check your registration number and password."
@@ -296,6 +308,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // removes them.
     fun logout() {
         client.logout()
+        portal.clear()
         examResult = null
         examSchedule = null
         weeklySchedule = null
@@ -323,11 +336,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun loadSchedules(showRefreshFeedback: Boolean = false) = launchScreenTask(0, showRefreshFeedback) {
         val schedules = withContext(Dispatchers.IO) {
             val exam = parseExamSchedule(client.getHtml("/sic/examschedule.php"))
-            val weekly = parseWeeklySchedule(client.getHtml("/sic/Schedule.php"))
+            val weekly = portal.refreshWeeklySchedule()
             exam to weekly
         }
         examSchedule = schedules.first
         weeklySchedule = schedules.second
+        NextClassWidgetSession.onDataChanged(getApplication())
     }
 
     fun loadAttendance(showRefreshFeedback: Boolean = false) = launchScreenTask(1, showRefreshFeedback) {

@@ -7,4 +7,5 @@
 -->
 <full-backup-content>
     <exclude domain="sharedpref" path="iulms_secure.xml" />
+    <exclude domain="sharedpref" path="iulms_widget.xml" />
 </full-backup-content>

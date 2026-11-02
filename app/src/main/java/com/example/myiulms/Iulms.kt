@@ -6,6 +6,7 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
 import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.FormBody
@@ -71,6 +72,8 @@ data class ExamSchedule(
     val entries: List<ExamScheduleEntry>
 )
 
+// @Serializable: cached on disk by PortalRepository for the widget.
+@Serializable
 data class WeeklyScheduleEntry(
     val day: String,
     val time: String,
@@ -81,6 +84,7 @@ data class WeeklyScheduleEntry(
     val courseCode: String
 )
 
+@Serializable
 data class WeeklySchedule(
     val title: String,
     val entries: List<WeeklyScheduleEntry>

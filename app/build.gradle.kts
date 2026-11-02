@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -52,6 +53,12 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("androidx.security:security-crypto:1.1.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
+    // 1.9.x is the line built for Kotlin 2.2; newer releases target Kotlin 2.3.
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+    implementation("androidx.glance:glance-appwidget:1.2.0")
+    implementation("androidx.glance:glance-material3:1.2.0")
+    implementation("androidx.glance:glance-preview:1.2.0")
+    implementation("androidx.glance:glance-appwidget-preview:1.2.0")
 
     testImplementation(libs.junit)
     testImplementation("org.json:json:20240303")

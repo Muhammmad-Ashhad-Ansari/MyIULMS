@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">MyIULMS</string>
+    <string name="next_class_widget_label">Next class</string>
+    <string name="next_class_widget_description">Your next or live class at a glance</string>
 </resources>

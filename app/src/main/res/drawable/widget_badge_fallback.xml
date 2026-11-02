@@ -1,0 +1,6 @@
+<!-- Pill shape for the LIVE badge below Android 12; tinted at runtime. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#FFFFFFFF" />
+    <corners android:radius="100dp" />
+</shape>

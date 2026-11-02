@@ -191,12 +191,13 @@ MyIULMS/
 | Credentials on disk | Yes, via AndroidX `EncryptedSharedPreferences` backed by Android Keystore | Nothing is written to disk |
 | Included in cloud backup / phone transfer | No — excluded by the app's backup rules | Not applicable |
 | Session cookies | Memory only, cleared on sign-out | Memory only |
+| Weekly class schedule (for the home-screen widget) | Yes, as an AES-256-GCM file under its own Android Keystore key, excluded from backup | Nothing is written to disk |
 
-This protects a lost or backed-up phone well. It does **not** protect a rooted device, or one running software that can read app files, and no app can promise credentials can never leak. Signing out ends the session but does **not** delete remembered credentials — log in again with "Remember me" unticked, or uninstall, to remove them.
+This protects a lost or backed-up phone well. It does **not** protect a rooted device, or one running software that can read app files, and no app can promise credentials can never leak. Signing out deletes the cached schedule and its key, and signing in to a different account discards the previous account's cache. Signing out ends the session but does **not** delete remembered credentials — log in again with "Remember me" unticked, or uninstall, to remove them.
 
 **Before you share.** Result, transcript, and schedule images include your **name**. Check an image before posting it. The app does not block screenshots.
 
-**Portal dependency.** Everything shown comes from IULMS, fetched when you open a screen; nothing is cached offline. If the portal is down or its pages change, parts of the app will stop working until updated.
+**Portal dependency.** Everything shown comes from IULMS, fetched when you open a screen. The only thing kept offline is the last weekly schedule (Remember me on), so the widget can show your next class; it updates whenever the app loads the schedule. If the portal is down or its pages change, parts of the app will stop working until updated.
 
 **Signing.** The released APK uses the project's Android debug certificate:
 

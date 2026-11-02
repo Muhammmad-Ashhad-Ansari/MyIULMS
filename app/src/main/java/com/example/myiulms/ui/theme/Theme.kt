@@ -8,7 +8,8 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-private val LightColors = lightColorScheme(
+// internal: the home-screen widget reuses these below Android 12.
+internal val LightColors = lightColorScheme(
     primary = MyIULMSBlue,
     onPrimary = Color.White,
     primaryContainer = MyIULMSBlueSoft,
@@ -52,7 +53,7 @@ private val LightColors = lightColorScheme(
     onErrorContainer = Color(0xFF410002)
 )
 
-private val DarkColors = darkColorScheme(
+internal val DarkColors = darkColorScheme(
     primary = Color(0xFF82CFFF),
     onPrimary = Color(0xFF00344F),
     primaryContainer = MyIULMSBlueSoftDark,

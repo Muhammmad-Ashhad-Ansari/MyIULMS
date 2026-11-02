@@ -100,6 +100,7 @@ import com.example.myiulms.ui.policy.AcademicPolicyHost
 import com.example.myiulms.ui.policy.LocalAcademicPolicyState
 import com.example.myiulms.ui.policy.PolicyInfoButton
 import com.example.myiulms.ui.policy.PolicyOverflowItem
+import com.example.myiulms.ui.widget.EXTRA_OPEN_TAB
 import com.example.myiulms.ui.policy.rememberAcademicPolicyState
 import com.example.myiulms.ui.theme.*
 import java.text.NumberFormat
@@ -113,10 +114,23 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 
+/**
+ * A request from outside the app (the home-screen widget) to show one tab.
+ * Compared by identity, so tapping the widget twice is two requests even when
+ * both ask for the same tab.
+ */
+class TabRequest(val tab: Int)
+
 class MainActivity : ComponentActivity() {
+    private var tabRequest by mutableStateOf<TabRequest?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Cold start. Skipped on recreation (rotation, process restore), where
+        // the launch intent still carries the extra but the student may since
+        // have moved to another tab.
+        if (savedInstanceState == null) consumeTabRequest(intent)
 
         val uiPrefs = getSharedPreferences("iulms_ui", MODE_PRIVATE)
 
@@ -134,11 +148,28 @@ class MainActivity : ComponentActivity() {
                             val next = !darkTheme
                             darkTheme = next
                             uiPrefs.edit { putBoolean("dark_theme", next) }
-                        }
+                        },
+                        tabRequest = tabRequest,
+                        onTabRequestHandled = { tabRequest = null }
                     )
                 }
             }
         }
+    }
+
+    // Warm start: the widget's CLEAR_TOP | SINGLE_TOP intent lands here when
+    // this activity is already running.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        consumeTabRequest(intent)
+    }
+
+    private fun consumeTabRequest(intent: Intent) {
+        val tab = intent.getIntExtra(EXTRA_OPEN_TAB, -1)
+        if (tab !in 0 until TAB_COUNT) return
+        tabRequest = TabRequest(tab)
+        intent.removeExtra(EXTRA_OPEN_TAB)
     }
 }
 
@@ -146,11 +177,14 @@ class MainActivity : ComponentActivity() {
 fun App(
     vm: MainViewModel = viewModel(),
     darkTheme: Boolean,
-    onThemeToggle: () -> Unit
+    onThemeToggle: () -> Unit,
+    tabRequest: TabRequest? = null,
+    onTabRequestHandled: () -> Unit = {}
 ) {
     val context = LocalContext.current
     if (vm.loggedIn) {
-        HomeScreen(vm, darkTheme, onThemeToggle)
+        // A request made while signed out waits here until the home screen exists.
+        HomeScreen(vm, darkTheme, onThemeToggle, tabRequest, onTabRequestHandled)
     } else {
         LoginScreen(vm, darkTheme, onThemeToggle, onCheckForUpdates = vm::checkForUpdates)
     }
@@ -451,7 +485,9 @@ private const val TAB_COUNT = 5
 private fun HomeScreen(
     vm: MainViewModel,
     darkTheme: Boolean,
-    onThemeToggle: () -> Unit
+    onThemeToggle: () -> Unit,
+    tabRequest: TabRequest?,
+    onTabRequestHandled: () -> Unit
 ) {
     val pagerState = rememberPagerState(initialPage = 0) { TAB_COUNT }
     // The pager is the single source of truth. `settledPage` only changes after
@@ -483,6 +519,15 @@ private fun HomeScreen(
                 duration = SnackbarDuration.Short
             )
         }
+    }
+
+    // External tab request (widget tap). Instant rather than animated: the app is
+    // just opening. The pager is the source of truth, so the nav pill, loading
+    // and refresh all follow from this one scroll.
+    LaunchedEffect(tabRequest) {
+        val request = tabRequest ?: return@LaunchedEffect
+        pagerState.scrollToPage(request.tab)
+        onTabRequestHandled()
     }
 
     LaunchedEffect(settledPage) {
