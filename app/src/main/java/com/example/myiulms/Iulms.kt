@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.core.content.edit
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.FormBody
@@ -15,6 +17,7 @@ import okhttp3.Request
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
@@ -31,6 +34,14 @@ class NotLoggedInException : Exception("Your session has expired. Please sign in
 class EvaluationRequiredException : Exception("Faculty evaluations required")
 
 // ---------------- Models ----------------
+
+// moodleUserId sirf photo URL ke liye hai; universityRegId parser nahi deta,
+// ViewModel login username se bharta hai.
+data class StudentIdentity(
+    val studentName: String,
+    val moodleUserId: String?,
+    val universityRegId: String?
+)
 
 data class ExamRow(
     val course: String,
@@ -418,6 +429,25 @@ class IulmsClient {
         return bytes
     }
 
+    // Session cookies jar se khud lagti hain; cookie is class se bahar nahi jati.
+    // Stale session ya gate par portal image ki jagah HTML deta hai — woh null hai.
+    suspend fun getProfilePhoto(moodleUserId: String): ByteArray? = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("$BASE/user/pix.php/$moodleUserId/f1.jpg")
+            .header("Accept", "image/*,*/*;q=0.8")
+            .build()
+        try {
+            http.newCall(req).execute().use { response ->
+                val bytes = response.body?.bytes() ?: ByteArray(0)
+                bytes.takeIf {
+                    response.isSuccessful && isImageResponse(response.header("Content-Type"), it)
+                }
+            }
+        } catch (_: IOException) {
+            null
+        }
+    }
+
     // Form POST (FORM_CONTRACT.md §5): application/x-www-form-urlencoded,
     // action="" → current page URL, session cookies authenticate. OkHttp
     // FormBody '[', ']' ko %5B/%5D encode karta hai — browser bilkul aisa hi
@@ -454,19 +484,29 @@ class IulmsClient {
 }
 
 // ---------------- Parsers ----------------
-fun parseStudentName(html: String): String? {
-    val doc = org.jsoup.Jsoup.parse(html)
-    val loginInfo = doc.selectFirst(".logininfo") ?: return null
+fun parseStudentIdentity(html: String): StudentIdentity {
+    val link = Jsoup.parse(html)
+        .selectFirst(".logininfo")
+        ?.select("a")
+        ?.firstOrNull { !it.attr("href").contains("logout.php", ignoreCase = true) }
 
-    return loginInfo
-        .select("a")
-        .firstOrNull {
-            !it.attr("href").contains("logout.php", ignoreCase = true)
-        }
-        ?.text()
-        ?.trim()
-        ?.takeIf { it.isNotBlank() }
+    return StudentIdentity(
+        studentName = link?.text()?.trim().orEmpty(),
+        moodleUserId = link?.attr("href")?.let(::parseMoodleUserId),
+        universityRegId = null
+    )
 }
+
+// Sirf profile link ka numeric id: yeh seedha photo URL path mein jata hai.
+private fun parseMoodleUserId(href: String): String? =
+    BASE.toHttpUrl().resolve(href)
+        ?.takeIf { it.encodedPath.endsWith("/user/view.php") }
+        ?.queryParameter("id")
+        ?.takeIf { id -> id.isNotEmpty() && id.all { it in '0'..'9' } }
+
+fun isImageResponse(contentType: String?, body: ByteArray): Boolean =
+    body.isNotEmpty() && contentType?.trim()?.startsWith("image/", ignoreCase = true) == true
+
 fun parseExamResult(html: String): ExamResult {
     val doc = Jsoup.parse(html)
     val title = doc.select("h1").firstOrNull { it.text().startsWith("EXAM RESULT") }?.text()

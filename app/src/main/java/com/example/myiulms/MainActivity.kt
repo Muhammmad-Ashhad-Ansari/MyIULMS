@@ -83,14 +83,16 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.myiulms.ui.dashboard.CampusZone
 import com.example.myiulms.ui.dashboard.ScheduleFocus
 import com.example.myiulms.ui.dashboard.ScheduleFocusCard
 import com.example.myiulms.ui.dashboard.groupScheduleByDay
 import com.example.myiulms.ui.dashboard.liveSecondsRemaining
 import com.example.myiulms.ui.dashboard.minuteOfDay
+import com.example.myiulms.ui.dashboard.nextFocusTickDelayMillis
 import com.example.myiulms.ui.dashboard.normalizeDay
 import com.example.myiulms.ui.dashboard.resolveScheduleFocus
 import com.example.myiulms.ui.dashboard.todayAbbrev
@@ -1535,12 +1537,13 @@ private fun WeeklyScheduleContent(
     val shareScope = rememberCoroutineScope()
 
     Column(modifier = Modifier.fillMaxSize()) {
-        val focusState = rememberScheduleFocusState(
-            schedule = schedule,
-            enabled = enabled,
-            focusVisible = listState.layoutInfo.visibleItemsInfo
-                .any { it.key == ITEM_KEY_DASHBOARD }
-        )
+        // derivedStateOf + read only inside ScheduleFocusHost: scrolling must not
+        // recompose this screen just to learn the card's visibility.
+        val focusVisible by remember(listState) {
+            derivedStateOf {
+                listState.layoutInfo.visibleItemsInfo.any { it.key == ITEM_KEY_DASHBOARD }
+            }
+        }
 
         /**
          * Static day-chip bar. A SIBLING of the list, not an item in it.
@@ -1681,9 +1684,10 @@ private fun WeeklyScheduleContent(
                 }
 
                 item(key = ITEM_KEY_DASHBOARD) {
-                    ScheduleFocusCard(
-                        focus = focusState.focus,
-                        secondsRemaining = focusState.secondsRemaining
+                    ScheduleFocusHost(
+                        schedule = schedule,
+                        enabled = enabled,
+                        isVisible = { focusVisible }
                     )
                 }
 
@@ -2028,89 +2032,57 @@ internal fun dayGroupLabelItemIndex(
 }
 
 /**
- * Dashboard tick state.
+ * Owns the dashboard card's clock, so a tick recomposes this host and the card
+ * only, never [WeeklyScheduleContent] or its LazyColumn.
  *
- * [focus] is recomputed on each tick; the ticker only runs while [enabled],
- * while the card is actually on screen, and while a class is live, so there is
- * no off-screen or idle work.
+ * [nowMillis] is the single source of truth; [ScheduleFocus] is always derived
+ * from it, so the card and the tick rate cannot disagree. The loop runs only
+ * while STARTED and re-syncs immediately on return from the background.
+ * [nextFocusTickDelayMillis] picks 1 Hz for a visible live class, otherwise the
+ * next minute boundary, which is where every state change and midnight fall.
  */
-private data class ScheduleFocusUiState(
-    val focus: ScheduleFocus,
-    val secondsRemaining: Int
-)
-
 @Composable
-private fun rememberScheduleFocusState(
-    schedule: WeeklySchedule?,
+private fun ScheduleFocusHost(
+    schedule: WeeklySchedule,
     enabled: Boolean,
-    focusVisible: Boolean
-): ScheduleFocusUiState {
-    val entries = remember(schedule) { schedule?.entries.orEmpty() }
-
-    // 1 Hz heartbeat. Only advances while the weekly sub-tab is visible, the
-    // card is inside the viewport, AND a class is live; otherwise the coroutine
-    // is not running at all.
+    isVisible: () -> Boolean
+) {
+    val entries = schedule.entries
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    var isLive by remember { mutableStateOf(false) }
 
-    // ON_RESUME resync. The composition (and its remembered state) survives
-    // backgrounding, so the effect below never re-runs when the app returns
-    // to the foreground — a class that started or ended while backgrounded
-    // would leave the card frozen at its pre-background value until the
-    // process is restarted. Bumping a tick key on ON_RESUME forces the same
-    // resolution to run again; the ticker keyed on `isLive` then starts or
-    // cancels itself off the freshly computed value.
-    var resumeTick by remember { mutableIntStateOf(0) }
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) resumeTick++
+    // derivedStateOf, not remember(nowMillis): the loop below reads this straight
+    // after writing nowMillis and must see the state for THIS tick, or the first
+    // tick of a class would schedule a full-minute sleep off the previous state.
+    val focus by remember(entries) {
+        derivedStateOf {
+            resolveScheduleFocus(
+                entries = entries,
+                today = todayAbbrev(nowMillis),
+                minuteOfDay = minuteOfDay(nowMillis)
+            )
         }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    LaunchedEffect(entries, enabled, resumeTick) {
+    val visible = isVisible()
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(entries, enabled, visible, lifecycle) {
         if (!enabled) return@LaunchedEffect
-        val initial = resolveScheduleFocus(
-            entries = entries,
-            today = todayAbbrev(),
-            minuteOfDay = minuteOfDay()
-        )
-        isLive = initial is ScheduleFocus.Live
-        nowMillis = System.currentTimeMillis()
-    }
-
-    LaunchedEffect(isLive, enabled, focusVisible) {
-        if (!enabled || !isLive || !focusVisible) return@LaunchedEffect
-        while (enabled && isLive && focusVisible) {
-            delay(1000L)
-            nowMillis = System.currentTimeMillis()
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                nowMillis = System.currentTimeMillis()
+                delay(nextFocusTickDelayMillis(focus, nowMillis, visible))
+            }
         }
     }
 
-    // Re-entering the viewport with a stale clock would paint the countdown at
-    // its pre-scroll value for up to a second, so resync on the way back in.
-    LaunchedEffect(focusVisible) {
-        if (focusVisible) nowMillis = System.currentTimeMillis()
-    }
-
-    val focus = remember(entries, nowMillis) {
-        resolveScheduleFocus(
-            entries = entries,
-            today = todayAbbrev(),
-            minuteOfDay = minuteOfDay(nowMillis)
-        )
-    }
-
-    val seconds = remember(focus, nowMillis) {
-        when (focus) {
-            is ScheduleFocus.Live -> liveSecondsRemaining(focus.entry, nowMillis)
+    val current = focus
+    ScheduleFocusCard(
+        focus = current,
+        secondsRemaining = when (current) {
+            is ScheduleFocus.Live -> liveSecondsRemaining(current.entry, nowMillis)
             else -> 0
         }
-    }
-
-    return ScheduleFocusUiState(focus = focus, secondsRemaining = seconds)
+    )
 }
 
 @Composable
@@ -3627,7 +3599,7 @@ private fun dueStatus(raw: String): DueInfo {
             clean,
             DateTimeFormatter.ofPattern("EEEE, d MMMM, yyyy", Locale.ENGLISH)
         )
-        val days = ChronoUnit.DAYS.between(LocalDate.now(), date)
+        val days = ChronoUnit.DAYS.between(LocalDate.now(CampusZone), date)
         when {
             days < 0 -> DueInfo("Overdue", DueKind.OVERDUE)
             days == 0L -> DueInfo("Due today", DueKind.SOON)

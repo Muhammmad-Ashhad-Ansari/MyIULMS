@@ -29,6 +29,13 @@ private val timeTokenPattern = Regex(
     "(?i)(?<![\\d:])(\\d{1,2}):(\\d{2})(?:\\s*(AM|PM|A\\.M\\.|P\\.M\\.))?(?!\\d)"
 )
 
+/**
+ * Portal schedules and due dates are campus wall-clock times, so they resolve
+ * here rather than in the device's zone: a phone set to another zone must not
+ * shift a class.
+ */
+val CampusZone: ZoneId = ZoneId.of("Asia/Karachi")
+
 /** Upper bound mirroring the existing duration guard (12 hours). */
 private const val MAX_DURATION_MINUTES = 12 * 60
 
@@ -37,6 +44,9 @@ private const val MINUTES_PER_HOUR = 60
 
 /** Minutes in a day, used to reduce an out-of-range minute-of-day safely. */
 private const val MINUTES_PER_DAY = 24 * 60
+
+private const val MILLIS_PER_SECOND = 1_000L
+private const val MILLIS_PER_MINUTE = 60_000L
 
 /** Sentinel shown when no trustworthy interval can be derived. */
 const val NO_COUNTDOWN = "—"
@@ -63,13 +73,13 @@ data class ScheduleInterval(
 )
 
 /**
- * Current minute-of-day (0..1439) in the device's zone.
+ * Current minute-of-day (0..1439) in the campus zone.
  *
  * @param epochMillis injectable so tests are deterministic.
  */
 fun minuteOfDay(
     epochMillis: Long = System.currentTimeMillis(),
-    zone: ZoneId = ZoneId.systemDefault()
+    zone: ZoneId = CampusZone
 ): Int = ZonedDateTime.ofInstant(java.time.Instant.ofEpochMilli(epochMillis), zone)
     .let { it.hour * 60 + it.minute }
 
@@ -79,7 +89,7 @@ fun minuteOfDay(
  */
 fun secondsOfDay(
     epochMillis: Long = System.currentTimeMillis(),
-    zone: ZoneId = ZoneId.systemDefault()
+    zone: ZoneId = CampusZone
 ): Int = ZonedDateTime.ofInstant(java.time.Instant.ofEpochMilli(epochMillis), zone)
     .let { it.hour * 3600 + it.minute * 60 + it.second }
 
@@ -92,7 +102,7 @@ fun secondsOfDay(
 fun liveSecondsRemaining(
     entry: WeeklyScheduleEntry,
     epochMillis: Long = System.currentTimeMillis(),
-    zone: ZoneId = ZoneId.systemDefault()
+    zone: ZoneId = CampusZone
 ): Int {
     val interval = parseScheduleInterval(entry.time) ?: return 0
     val durationSeconds = interval.durationMinutes * 60
@@ -106,7 +116,7 @@ fun liveSecondsRemaining(
  */
 fun todayAbbrev(
     epochMillis: Long = System.currentTimeMillis(),
-    zone: ZoneId = ZoneId.systemDefault()
+    zone: ZoneId = CampusZone
 ): String = ZonedDateTime.ofInstant(java.time.Instant.ofEpochMilli(epochMillis), zone)
     .dayOfWeek
     .abbrev()
@@ -289,6 +299,16 @@ fun resolveScheduleFocus(
 
     // Today had real classes and the last one has ended.
     return ScheduleFocus.Done
+}
+
+/**
+ * Milliseconds until the dashboard clock should next tick, aligned to the
+ * boundary so the countdown never drifts: the next second for a visible live
+ * class, otherwise the next minute, where every state change and midnight fall.
+ */
+fun nextFocusTickDelayMillis(focus: ScheduleFocus, nowMillis: Long, visible: Boolean): Long {
+    val period = if (focus is ScheduleFocus.Live && visible) MILLIS_PER_SECOND else MILLIS_PER_MINUTE
+    return period - Math.floorMod(nowMillis, period)
 }
 
 /**

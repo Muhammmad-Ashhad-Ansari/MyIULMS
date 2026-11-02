@@ -3,20 +3,35 @@ package com.example.myiulms
 import android.app.Application
 import android.content.Context
 import android.content.SharedPreferences
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+
+// Photo sirf memory mein rehti hai (README: "nothing is cached offline").
+sealed interface PhotoState {
+    data object Idle : PhotoState
+    data object Loading : PhotoState
+    data class Loaded(val photo: ImageBitmap) : PhotoState
+    data object Unavailable : PhotoState
+}
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val client = IulmsSession.client
@@ -134,6 +149,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     var studentName by mutableStateOf<String?>(null)
         private set
+    private val _studentIdentity = MutableStateFlow<StudentIdentity?>(null)
+    val studentIdentity: StateFlow<StudentIdentity?> = _studentIdentity.asStateFlow()
+    private val _photoState = MutableStateFlow<PhotoState>(PhotoState.Idle)
+    val photoState: StateFlow<PhotoState> = _photoState.asStateFlow()
+    private var photoJob: Job? = null
+
+    // savedUser "Remember me" off par null hota hai; Reg ID ko yeh chahiye.
+    private var loggedInUser: String? = null
+
     var savedUser: String? = null
         private set
     var savedPassword: String? = null
@@ -227,7 +251,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 try {
                     val homeHtml = client.getHtml("/")
-                    Pair(true, parseStudentName(homeHtml))
+                    Pair(true, parseStudentIdentity(homeHtml))
                 } catch (e: EvaluationRequiredException) {
                     // Login kaamyab lekin home par gate redirect: yahan rokna zaroori
                     // hai, warna neeche ka remember-me save aur loggedIn=true chhut
@@ -241,10 +265,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (gatedDuringHomeFetch) evaluationRequired = true
 
         val ok = loginResult.first
-        val name = loginResult.second
+        val identity = loginResult.second
 
         if (ok) {
-            studentName = name
+            loggedInUser = user
+            applyStudentIdentity(identity)
 
             if (remember) {
                 store.save(user, pass)
@@ -281,6 +306,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         screenLoadStates = emptyMap()
         transcript = null
         studentName = null
+        loggedInUser = null
+        _studentIdentity.value = null
+        resetStudentPhoto()
         errorMsg = null
         evaluationRequired = false
         loggedIn = false
@@ -430,18 +458,67 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // session error asli tab-load path se hi dikhte hain.
     private fun refreshStudentName() {
         viewModelScope.launch {
-            val name = withContext(Dispatchers.IO) {
+            val identity = withContext(Dispatchers.IO) {
                 try {
-                    parseStudentName(client.getHtml("/"))
+                    parseStudentIdentity(client.getHtml("/"))
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {
                     null
                 }
             }
-            studentName = name
+            applyStudentIdentity(identity)
         }
     }
+
+    private fun applyStudentIdentity(identity: StudentIdentity?) {
+        studentName = identity?.studentName?.takeIf { it.isNotBlank() }
+        // Session expire ke baad doosra student login kar sakta hai (logout() nahi
+        // chalta) — purani photo us ke card par nahi rehni chahiye.
+        if (identity?.moodleUserId != _studentIdentity.value?.moodleUserId) resetStudentPhoto()
+        _studentIdentity.value = identity?.copy(universityRegId = loggedInUser)
+    }
+
+    fun loadStudentPhoto() {
+        val state = _photoState.value
+        if (state is PhotoState.Loading || state is PhotoState.Loaded) return
+        val moodleUserId = _studentIdentity.value?.moodleUserId
+        if (moodleUserId == null) {
+            _photoState.value = PhotoState.Unavailable
+            return
+        }
+
+        _photoState.value = PhotoState.Loading
+        photoJob = viewModelScope.launch {
+            val bitmap = client.getProfilePhoto(moodleUserId)?.let { bytes ->
+                withContext(Dispatchers.Default) { decodeStudentPhoto(bytes) }
+            }
+            _photoState.value = bitmap
+                ?.let { PhotoState.Loaded(it.asImageBitmap()) }
+                ?: PhotoState.Unavailable
+        }
+    }
+
+    // Cancel zaroori hai: warna in-flight fetch logout ke baad photo wapas likh deta.
+    private fun resetStudentPhoto() {
+        photoJob?.cancel()
+        photoJob = null
+        _photoState.value = PhotoState.Idle
+    }
+}
+
+private const val STUDENT_PHOTO_MAX_DIMENSION_PX = 512
+
+// Portal ki photo ka size hamare haath mein nahi, isliye pehle bounds, phir downsample.
+private fun decodeStudentPhoto(bytes: ByteArray): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    var sampleSize = 1
+    while (maxOf(bounds.outWidth, bounds.outHeight) / (sampleSize * 2) >= STUDENT_PHOTO_MAX_DIMENSION_PX) {
+        sampleSize *= 2
+    }
+    val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
 }
 
 private fun Throwable.toSignInErrorMessage(): String {

@@ -7,10 +7,13 @@ import com.example.myiulms.ui.dashboard.formatRoomLabel
 import com.example.myiulms.ui.dashboard.formatStartsIn
 import com.example.myiulms.ui.dashboard.formatUpcomingMetadata
 import com.example.myiulms.ui.dashboard.formatWallClock
+import com.example.myiulms.ui.dashboard.minuteOfDay
+import com.example.myiulms.ui.dashboard.nextFocusTickDelayMillis
 import com.example.myiulms.ui.dashboard.normalizeDay
 import com.example.myiulms.ui.dashboard.parseScheduleInterval
 import com.example.myiulms.ui.dashboard.resolveScheduleFocus
 import com.example.myiulms.ui.dashboard.scheduleStartMinutes
+import com.example.myiulms.ui.dashboard.todayAbbrev
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -332,5 +335,28 @@ class ScheduleIntervalTest {
             minuteOfDay = 13 * 60 + 30
         ) as ScheduleFocus.Upcoming
         assertEquals(840, upcoming.startMinuteOfDay)
+    }
+
+    @Test
+    fun `clock ticks to the next second only for a visible live class`() {
+        val live = resolveScheduleFocus(listOf(entry("08:00 - 09:00")), "MON", 8 * 60 + 30)
+
+        assertEquals(750L, nextFocusTickDelayMillis(live, 60_250L, visible = true))
+        assertEquals(59_750L, nextFocusTickDelayMillis(live, 60_250L, visible = false))
+    }
+
+    @Test
+    fun `clock sleeps to the next minute boundary outside a live class`() {
+        assertEquals(59_750L, nextFocusTickDelayMillis(ScheduleFocus.Done, 60_250L, visible = true))
+        assertEquals(60_000L, nextFocusTickDelayMillis(ScheduleFocus.OffDay, 120_000L, visible = true))
+    }
+
+    @Test
+    fun `day and minute resolve in the campus zone by default`() {
+        // Sunday 2026-11-01 19:30 UTC is Monday 00:30 in Karachi (UTC+5).
+        val epochMillis = 1793561400000L
+
+        assertEquals("MON", todayAbbrev(epochMillis))
+        assertEquals(30, minuteOfDay(epochMillis))
     }
 }
