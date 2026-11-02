@@ -95,6 +95,7 @@ import com.example.myiulms.ui.dashboard.minuteOfDay
 import com.example.myiulms.ui.dashboard.nextFocusTickDelayMillis
 import com.example.myiulms.ui.dashboard.normalizeDay
 import com.example.myiulms.ui.dashboard.resolveScheduleFocus
+import com.example.myiulms.ui.dashboard.scheduleFreshnessNote
 import com.example.myiulms.ui.dashboard.todayAbbrev
 import com.example.myiulms.ui.policy.AcademicPolicyHost
 import com.example.myiulms.ui.policy.LocalAcademicPolicyState
@@ -182,7 +183,7 @@ fun App(
     onTabRequestHandled: () -> Unit = {}
 ) {
     val context = LocalContext.current
-    if (vm.loggedIn) {
+    if (vm.showHome) {
         // A request made while signed out waits here until the home screen exists.
         HomeScreen(vm, darkTheme, onThemeToggle, tabRequest, onTabRequestHandled)
     } else {
@@ -480,6 +481,7 @@ private fun LoginScreen(
 
 // Number of top-level tabs: Schedule, Attendance, Result, Transcript, Vouchers.
 private const val TAB_COUNT = 5
+private const val SCHEDULE_PAGE = 0
 
 @Composable
 private fun HomeScreen(
@@ -500,9 +502,10 @@ private fun HomeScreen(
 
     val useCompactNavLabels = LocalDensity.current.fontScale >= 1.3f
     val showNavLabels = LocalDensity.current.fontScale < 1.4f
-    val screenState = vm.screenLoadStates[settledPage] ?: ScreenLoadState()
+    val screenState = vm.screenStateFor(settledPage)
     val hasData = when (settledPage) {
-        0 -> vm.examSchedule != null && vm.weeklySchedule != null
+        // Either half counts: a saved weekly schedule is real data on screen.
+        0 -> vm.examSchedule != null || vm.weeklySchedule != null
         1 -> vm.attendance != null
         2 -> vm.examResult != null
         3 -> vm.transcript != null
@@ -530,7 +533,9 @@ private fun HomeScreen(
         onTabRequestHandled()
     }
 
-    LaunchedEffect(settledPage) {
+    // Portal loads wait for a real sign-in; a cached session shows saved data only.
+    LaunchedEffect(settledPage, vm.loggedIn) {
+        if (!vm.loggedIn) return@LaunchedEffect
         when (settledPage) {
             0 -> if (vm.examSchedule == null || vm.weeklySchedule == null) vm.loadSchedules()
             1 -> if (vm.attendance == null) vm.loadAttendance()
@@ -567,7 +572,9 @@ private fun HomeScreen(
                     darkTheme = darkTheme,
                     onThemeToggle = onThemeToggle,
                     onRefresh = { vm.refresh(settledPage) },
-                    refreshing = screenState.loading,
+                    // The Schedule tab reports syncs through its freshness line
+                    // only; other tabs keep the toolbar spinner.
+                    refreshing = screenState.loading && settledPage != SCHEDULE_PAGE,
                     onCheckForUpdates = vm::checkForUpdates,
                     onLogout = vm::logout,
                     studentName = vm.studentName
@@ -628,7 +635,7 @@ private fun HomeScreen(
                         bottom = 0.dp
                     )
             ) {
-                if (screenState.loading && hasData) {
+                if (screenState.loading && hasData && settledPage != SCHEDULE_PAGE) {
                     LinearProgressIndicator(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -649,7 +656,7 @@ private fun HomeScreen(
                     state = pagerState,
                     modifier = Modifier.weight(1f)
                 ) { page ->
-                    val pageState = vm.screenLoadStates[page] ?: ScreenLoadState()
+                    val pageState = vm.screenStateFor(page)
                     // Keep each page's UI state (sub-tab, scroll, expanded rows,
                     // filter) without holding every page in composition.
                     saveableStateHolder.SaveableStateProvider(page) {
@@ -657,6 +664,12 @@ private fun HomeScreen(
                             0 -> SchedulesScreen(
                                 vm.examSchedule,
                                 vm.weeklySchedule,
+                                scheduleFreshnessNote(
+                                    fetchedAtMillis = vm.weeklyScheduleUpdatedAt,
+                                    fromCache = vm.weeklyScheduleFromCache,
+                                    syncing = pageState.loading,
+                                    nowMillis = System.currentTimeMillis()
+                                ),
                                 pageState,
                                 onRetry = { vm.refresh(page) },
                                 onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) },
@@ -1423,6 +1436,7 @@ private fun ResultCourseCard(row: ExamRow) {
 private fun SchedulesScreen(
     examSchedule: ExamSchedule?,
     weeklySchedule: WeeklySchedule?,
+    freshnessNote: String?,
     screenState: ScreenLoadState,
     onRetry: () -> Unit,
     onPullRefresh: () -> Unit,
@@ -1459,6 +1473,7 @@ private fun SchedulesScreen(
                 subTabStateHolder.SaveableStateProvider("weekly") {
                     WeeklyScheduleContent(
                         schedule = weeklySchedule,
+                        freshnessNote = freshnessNote,
                         screenState = screenState,
                         onRetry = onRetry,
                         onPullRefresh = onPullRefresh,
@@ -1469,7 +1484,11 @@ private fun SchedulesScreen(
                 }
             } else {
                 subTabStateHolder.SaveableStateProvider("exam") {
-                    ExamScheduleContent(examSchedule, screenState, onRetry, onPullRefresh)
+                    Column {
+                        // No day chips here, so the line sits under the sub-tab row.
+                        FreshnessLine(freshnessNote)
+                        ExamScheduleContent(examSchedule, screenState, onRetry, onPullRefresh)
+                    }
                 }
             }
         }
@@ -1489,9 +1508,10 @@ private fun ExamScheduleContent(
     }
 
     // Data-present branch only: `loading` here always means a refresh, never the first load.
+    val manualPull = rememberManualPull(screenState.loading)
     PullToRefreshBox(
-        isRefreshing = screenState.loading,
-        onRefresh = onPullRefresh,
+        isRefreshing = manualPull.isRefreshing(screenState.loading),
+        onRefresh = { manualPull.pulled = true; onPullRefresh() },
         modifier = Modifier.fillMaxSize()
     ) {
         LazyColumn(
@@ -1545,9 +1565,49 @@ private fun ExamScheduleContent(
 }
 
 @OptIn(ExperimentalFoundationApi::class)
+/**
+ * "Syncing… · last updated …" / "Saved copy · last updated …". Announced
+ * politely, so TalkBack hears a sync start and finish without a spinner.
+ */
+@Composable
+private fun FreshnessLine(note: String?) {
+    if (note == null) return
+    Text(
+        text = note,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = ListGutter, vertical = AppSpacing.Xs)
+            .semantics { liveRegion = LiveRegionMode.Polite },
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+    )
+}
+
+/**
+ * Pull indicator that spins only for a refresh the student asked for: a
+ * background sync never sets [pulled]. Reset when the load ends, so the next
+ * automatic sync stays quiet again.
+ */
+private class ManualPull {
+    var pulled by mutableStateOf(false)
+    fun isRefreshing(loading: Boolean) = pulled && loading
+}
+
+@Composable
+private fun rememberManualPull(loading: Boolean): ManualPull {
+    val pull = remember { ManualPull() }
+    LaunchedEffect(loading) {
+        if (!loading) pull.pulled = false
+    }
+    return pull
+}
+
 @Composable
 private fun WeeklyScheduleContent(
     schedule: WeeklySchedule?,
+    freshnessNote: String?,
     screenState: ScreenLoadState,
     onRetry: () -> Unit,
     onPullRefresh: () -> Unit,
@@ -1651,10 +1711,15 @@ private fun WeeklyScheduleContent(
             }
         }
 
+        // The Schedule tab's only sync indicator. Static, under the chips, so it
+        // stays visible while scrolling.
+        FreshnessLine(freshnessNote)
+
         // Data-present branch only: `loading` here always means a refresh, never the first load.
+        val manualPull = rememberManualPull(screenState.loading)
         PullToRefreshBox(
-            isRefreshing = screenState.loading,
-            onRefresh = onPullRefresh,
+            isRefreshing = manualPull.isRefreshing(screenState.loading),
+            onRefresh = { manualPull.pulled = true; onPullRefresh() },
             modifier = Modifier.fillMaxWidth()
         ) {
             LazyColumn(

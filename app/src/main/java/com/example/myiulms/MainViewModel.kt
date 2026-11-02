@@ -17,6 +17,8 @@ import com.example.myiulms.ui.widget.NextClassWidgetSession
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -55,8 +57,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         get() = loggedInState
         private set(value) {
             loggedInState = value
+            // Either outcome ends a cached session: signed in for real, or out.
+            offlineSession = false
             NextClassWidgetSession.onAuthChanged(getApplication(), value)
         }
+
+    // Cached session: remembered credentials plus a saved schedule for the same
+    // account, shown before (or without) a successful network sign-in. Only the
+    // Schedule tab has data; every portal call waits for loggedIn.
+    var offlineSession by mutableStateOf(false)
+        private set
+    val showHome: Boolean get() = loggedIn || offlineSession
+    /** Cached session currently trying to reach the portal. */
+    val signingInFromCache: Boolean get() = offlineSession && loading
     // App-level faculty-evaluation gate flag. Sirf detection layer set karta hai;
     // clear sirf logout ya onEvaluationReturned() karta hai. Session expire nahi
     // hua hota is waqt — loggedIn alag rehta hai.
@@ -78,6 +91,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var examSchedule by mutableStateOf<ExamSchedule?>(null)
         private set
     var weeklySchedule by mutableStateOf<WeeklySchedule?>(null)
+        private set
+    /** When [weeklySchedule] was fetched; with [weeklyScheduleFromCache], drives the "last updated" note. */
+    var weeklyScheduleUpdatedAt by mutableStateOf<Long?>(null)
+        private set
+    var weeklyScheduleFromCache by mutableStateOf(false)
         private set
     var attendance by mutableStateOf<AttendanceSummary?>(null)
         private set
@@ -179,8 +197,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (saved != null) {
             savedUser = saved.first
             savedPassword = saved.second
+            // Instant launch: draw the saved schedule while the sign-in runs. A
+            // local read, so it normally lands well before the network login.
+            viewModelScope.launch { restoreSavedSchedule(saved.first) }
             launchTask { doLogin(saved.first, saved.second, true) }
         }
+    }
+
+    private suspend fun restoreSavedSchedule(username: String) {
+        val cached = runCatching { portal.cachedWeeklyScheduleFor(username) }.getOrNull() ?: return
+        if (weeklySchedule != null || loggedIn) {
+            // Sign-in already won; the Schedule tab's own load shows the cache.
+            return
+        }
+        weeklySchedule = cached.payload
+        weeklyScheduleUpdatedAt = cached.fetchedAt
+        weeklyScheduleFromCache = true
+        offlineSession = true
+    }
+
+    /** Pull-to-refresh in a cached session: retry the sign-in, which then loads the tab. */
+    private fun retryCachedSignIn() {
+        val user = savedUser ?: return
+        val pass = savedPassword ?: return
+        if (!offlineSession || loading) return
+        launchTask { doLogin(user, pass, true) }
     }
 
     private fun launchTask(onSuccess: (() -> Unit)? = null, block: suspend () -> Unit) {
@@ -296,6 +337,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             loggedIn = true
         } else {
             errorMsg = "Sign in failed. Check your registration number and password."
+            // Credentials rejected: the saved copy must not stay on screen.
+            offlineSession = false
         }
     }
 
@@ -311,7 +354,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         portal.clear()
         examResult = null
         examSchedule = null
-        weeklySchedule = null
+        clearWeeklySchedule()
         attendance = null
         vouchers = null
         downloadingVoucherNumber = null
@@ -334,14 +377,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadSchedules(showRefreshFeedback: Boolean = false) = launchScreenTask(0, showRefreshFeedback) {
-        val schedules = withContext(Dispatchers.IO) {
-            val exam = parseExamSchedule(client.getHtml("/sic/examschedule.php"))
-            val weekly = portal.refreshWeeklySchedule()
-            exam to weekly
+        try {
+            coroutineScope {
+                val exam = async(Dispatchers.IO) { parseExamSchedule(client.getHtml("/sic/examschedule.php")) }
+                portal.weeklyScheduleUpdates(loggedInUser).collect { update ->
+                    // The saved copy only fills an empty screen; it never replaces
+                    // data already on it.
+                    if (update.fromCache && weeklySchedule != null) return@collect
+                    weeklySchedule = update.value
+                    weeklyScheduleUpdatedAt = update.fetchedAt
+                    weeklyScheduleFromCache = update.fromCache
+                }
+                examSchedule = exam.await()
+            }
+        } catch (e: EvaluationRequiredException) {
+            // The gate card only shows on an empty screen; a saved schedule must
+            // never hide it.
+            clearWeeklySchedule()
+            throw e
         }
-        examSchedule = schedules.first
-        weeklySchedule = schedules.second
         NextClassWidgetSession.onDataChanged(getApplication())
+    }
+
+    private fun clearWeeklySchedule() {
+        weeklySchedule = null
+        weeklyScheduleUpdatedAt = null
+        weeklyScheduleFromCache = false
     }
 
     fun loadAttendance(showRefreshFeedback: Boolean = false) = launchScreenTask(1, showRefreshFeedback) {
@@ -430,6 +491,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // button and the retry buttons confirm with it; the pull gesture passes
     // false because its own on-screen indicator is the success signal.
     fun refresh(tab: Int, showRefreshFeedback: Boolean = true) {
+        if (!loggedIn) {
+            retryCachedSignIn()
+            return
+        }
         when (tab) {
             0 -> loadSchedules(showRefreshFeedback)
             1 -> loadAttendance(showRefreshFeedback)
@@ -457,7 +522,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         errorMsg = null
         examResult = null
         examSchedule = null
-        weeklySchedule = null
+        clearWeeklySchedule()
         attendance = null
         vouchers = null
         transcript = null
@@ -560,6 +625,23 @@ data class ScreenLoadState(
     // Gate ke waqt error NULL rehta hai, taake UI Connection problem na dikhaye.
     val portalActionRequired: Boolean = false
 )
+
+/**
+ * A tab's state as the screen should show it. In a cached session the portal
+ * has not been reached: a sign-in attempt reads as a refresh, otherwise as an
+ * error with retry, so no tab spins forever.
+ */
+fun MainViewModel.screenStateFor(tab: Int): ScreenLoadState {
+    val state = screenLoadStates[tab] ?: ScreenLoadState()
+    return when {
+        loggedIn -> state
+        signingInFromCache -> state.copy(loading = true, error = null)
+        offlineSession -> state.copy(loading = false, error = state.error ?: OFFLINE_MESSAGE)
+        else -> state
+    }
+}
+
+const val OFFLINE_MESSAGE = "Couldn't reach IULMS. Pull down to try again."
 
 // ---------------- Screen-load state transitions (pure, unit-tested) ----------------
 // Har transition inhi helpers se guzarta hai (GateStateTransitionTest) — is tarah

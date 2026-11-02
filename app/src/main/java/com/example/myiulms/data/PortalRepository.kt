@@ -6,7 +6,13 @@ import com.example.myiulms.IulmsSession
 import com.example.myiulms.WeeklySchedule
 import com.example.myiulms.parseWeeklySchedule
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
+
+/** A value plus when it was fetched, and whether it came from the saved copy. */
+data class Timestamped<T>(val value: T, val fetchedAt: Long, val fromCache: Boolean)
 
 /**
  * Bridge between the portal and the on-disk cache. Only the weekly schedule is
@@ -55,6 +61,24 @@ class PortalRepository(
     suspend fun cachedWeeklySchedule(): CacheEnvelope<WeeklySchedule>? = withContext(Dispatchers.IO) {
         cache.read(WEEKLY_SCHEDULE)?.let { decodeEnvelope(WeeklySchedule.serializer(), it) }
     }
+
+    /** The saved schedule, but only if it belongs to [username]. */
+    suspend fun cachedWeeklyScheduleFor(username: String): CacheEnvelope<WeeklySchedule>? =
+        cachedWeeklySchedule()?.takeIf { it.ownerHash == ownerHashOf(username) }
+
+    /**
+     * Cache-then-network: emits [username]'s saved schedule first (if any), so a
+     * screen can draw instantly, then fetches, saves and emits the portal copy.
+     * A network failure is thrown after the cached emission, so the caller keeps
+     * the saved copy on screen and reports the error beside it.
+     */
+    fun weeklyScheduleUpdates(username: String?): Flow<Timestamped<WeeklySchedule>> = flow {
+        if (username != null) {
+            cachedWeeklyScheduleFor(username)?.let { emit(Timestamped(it.payload, it.fetchedAt, fromCache = true)) }
+        }
+        val fresh = refreshWeeklySchedule()
+        emit(Timestamped(fresh, System.currentTimeMillis(), fromCache = false))
+    }.flowOn(Dispatchers.IO)
 
     /** Fetches and parses the schedule, then saves it if an owner is active. */
     suspend fun refreshWeeklySchedule(): WeeklySchedule = withContext(Dispatchers.IO) {
