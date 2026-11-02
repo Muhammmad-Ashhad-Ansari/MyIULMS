@@ -2,6 +2,8 @@
 
 **Scope of this document:** a plain-language, evidence-backed answer to the questions raised in the Iqra student community discussion. Every technical claim below was re-checked against the repository at commit `87f958f` and against the published `v1.0.6` release artifact.
 
+**Update — offline schedule cache (commit `e773e2b`, after `v1.1.0`):** the app now keeps one thing on the phone besides remembered credentials: an encrypted copy of the weekly class schedule, so the home-screen widget can show your next class. Every statement below that said nothing is stored offline has been corrected; the new behaviour is described in §5.4.1. Sections touched: §3.1, §3.2, §5.4, §5.4.1, §5.5, §9.1, §9.2, §11.1, §13, §15.1. The rest of the document still reflects the review at `87f958f`.
+
 **What this document is not:** this is not a formal security audit, penetration test, or independent code review. No third-party review was performed. No guarantee of safety, stability, or correctness is offered or implied — a student who is not comfortable sideloading an unofficial build should use the official portal, and that is a perfectly reasonable choice.
 
 **Sources used**
@@ -93,12 +95,13 @@ The contribution is navigation and presentation, not new data. The app opens on 
 
 ### 3.1 Simple answer for students
 
-Four things the portal does not have:
+Five things the portal does not have:
 
 1. A **live / next-class indicator** with a countdown.
 2. A **degree progress bar** (completed credit hours out of the total).
 3. **Share a result, transcript, or schedule as an image**.
 4. A **grading and scholarship reference** you can read inside the app.
+5. A **home-screen widget** showing your current or next class and the rest of the day.
 
 Plus interface conveniences: a weekday shortcut bar, and a light/dark theme toggle.
 
@@ -116,7 +119,8 @@ Plus interface conveniences: a weekday shortcut bar, and a light/dark theme togg
 | Light / dark theme | **Yes** | `MainActivity.kt:108-136`, persisted in `iulms_ui` SharedPreferences |
 | Vouchers — view, download, print | **Yes** | `VoucherDownload.kt:88-127` (PDF to `Downloads/MyIULMS`), `VoucherPrintActivity.kt:87` (print job) |
 | Exam schedule | **Yes** | `/sic/examschedule.php`, `MainViewModel.kt:271-272` |
-| Offline / cached data | **No** | No database library in `app/build.gradle.kts`; no `@Database`/`@Entity` anywhere |
+| Offline / cached data | **Only the weekly schedule, only with Remember me on** | Encrypted file for the home-screen widget — `data/PortalCache.kt`, `data/PortalRepository.kt`; still no database (§5.4.1) |
+| Home-screen widget | **Yes** | `ui/widget/NextClassWidget.kt` (Jetpack Glance); reads only the cached schedule, never the network |
 | Android only | **Yes** | No iOS project in the repository; the PDF discusses Flutter/React Native only as an option the maintainer was asked to choose between, and the project was built natively in Kotlin |
 
 ### 3.3 Limits / unknowns
@@ -188,11 +192,28 @@ So "your password never leaves RAM while the app is signed in" is the honest sta
 
 `SessionCookieJar` (`Iulms.kt:114-139`) is a `ConcurrentHashMap` **in process memory only**. It is never written to disk, never included in a backup, and is emptied on sign-out (`Iulms.kt:188-191` → `jar.clear()`). Expired cookies are dropped on read (`Iulms.kt:130-131`).
 
-The `iulms_ui` (theme flag) and `myilms_update_check` (a timestamp) SharedPreferences files **are** included in backups, since only `iulms_secure.xml` is excluded. They contain no personal data.
+The `iulms_ui` (theme flag) and `myilms_update_check` (a timestamp) SharedPreferences files **are** included in backups. They contain no personal data. Excluded from backups: `iulms_secure.xml` and `iulms_widget.xml` (the widget's signed-in flag, below); the schedule cache lives in a folder Android never backs up.
+
+### 5.4.1 The offline schedule cache (home-screen widget)
+
+**Simple answer:** for the widget to show your next class without logging in, the app keeps your weekly class schedule on the phone. It does this only when "Remember me" is ticked, the copy is encrypted, it is never backed up, and signing out deletes it.
+
+| | Detail |
+|---|---|
+| What is stored | The weekly class schedule only: day, time, course title and code, room, faculty. No marks, attendance, transcript, vouchers, name, or credentials |
+| When | Only when you sign in with **Remember me ticked**. Signing in with it unticked writes nothing and deletes any existing copy |
+| Where | `noBackupFilesDir/portal-cache/weekly_schedule.bin` — app-private storage that Android excludes from both cloud backup and device-to-device transfer |
+| Encryption | AES-256-GCM, with a key generated inside **Android Keystore** (`portal_cache_v1`) that cannot be exported. A copy of the file taken to another device cannot be decrypted. A file that fails to decrypt is deleted, not trusted (`data/PortalCache.kt`) |
+| Whose data | Each file records a SHA-256 hash of the account's registration number (never the number itself) inside the encrypted payload (`data/CacheEnvelope.kt`) |
+| Deleted when | **Signing out** deletes the file and its Keystore key immediately. **Signing in to a different account** deletes the previous account's copy before the widget is told anyone is signed in. **Signing in with Remember me unticked** deletes it. A download still running at sign-out cannot re-create it (`data/PortalRepository.kt`) |
+| Not deleted when | The portal session merely expires. The copy stays, but the widget shows "Signed out" until you sign in again |
+| Widget sign-in flag | `iulms_widget.xml` holds one true/false value and nothing else. It is cleared on sign-out and excluded from backups, so a restored phone never shows a signed-in widget |
+
+**What this does not protect against** is the same as for credentials (§5.3): on a rooted device, or one running software that can act as the app while the phone is unlocked, the key can be used. And the widget itself shows course names and rooms on the home screen, where anyone looking at the phone can read them — remove the widget if that matters to you.
 
 ### 5.5 What signing out clears — and what it does not
 
-**Clears:** session cookies (`Iulms.kt:189`), in-memory credentials (`Iulms.kt:190`), and all in-memory academic state — results, schedules, attendance, transcript, vouchers, student name, error messages (`MainViewModel.kt:248-262`).
+**Clears:** session cookies (`Iulms.kt:189`), in-memory credentials (`Iulms.kt:190`), all in-memory academic state — results, schedules, attendance, transcript, vouchers, student name, error messages (`MainViewModel.kt:248-262`) — and, since `e773e2b`, the cached weekly schedule together with its Keystore key and the widget's signed-in flag (§5.4.1). The widget switches to "Signed out" straight away.
 
 **Does NOT clear:** the encrypted saved credentials. `MainViewModel.kt` `logout()` contains no call to `store.clear()`. The code comment at `MainViewModel.kt:245-247` states this is deliberate: *"Signing out ends the network session, but remembered credentials remain encrypted on the device. Unchecking Remember me on a successful login removes them."*
 
@@ -409,20 +430,20 @@ Students are equally welcome to build from source and use the official portal. B
 
 ### 9.1 Simple answer for students
 
-Everything. The app has no content of its own. Every time you open a screen, it asks the portal for that page, right then. Nothing is saved for later, so the app is only as available as the portal is.
+Everything. The app has no content of its own. Every time you open a screen, it asks the portal for that page, right then, so the app is only as available as the portal is. The one exception is the home-screen widget: it shows the last weekly schedule the app saved (§5.4.1), which can be out of date until you open the app again.
 
 ### 9.2 Technical detail
 
 | Behaviour | Implementation |
 |---|---|
 | Fetch strategy | On demand, per screen, per tab switch — `MainActivity.kt:492-494` refreshes when schedule is null |
-| Caching | **None.** No database, no HTTP cache configured on the client (`Iulms.kt:158-166` builds `OkHttpClient` with only a cookie jar) |
+| Caching | **Weekly schedule only**, encrypted, for the widget (§5.4.1). No database and no HTTP cache (`OkHttpClient` is built with only a cookie jar) |
 | Sync | **None.** No background sync, no push, no WorkManager job anywhere in the project |
 | Session expiry | Detected by `isLoggedIn()` returning false (`Iulms.kt:168`), then transparent re-login and retry, twice, via `getHtml` (`Iulms.kt:199-207`) |
 | Failures | Surfaced as a message in the UI; `screenLoadStates` tracks per-screen loading/error state (`MainViewModel.kt:57`) |
 | Update check | The only non-portal request, to GitHub (§5.7) |
 
-So "all data is pulled live from the portal" is **accurate**, but the word *live* is loose — it invites the inference of push updates or background sync, and there are none. The precise version: *"fetched from the portal each time you open a screen; nothing is stored on the phone."*
+So "all data is pulled live from the portal" is **accurate**, but the word *live* is loose — it invites the inference of push updates or background sync, and there are none. The precise version: *"fetched from the portal each time you open a screen; only your weekly schedule is kept on the phone, encrypted, for the widget."*
 
 ### 9.3 Signing — current state and what would need to change
 
@@ -506,8 +527,8 @@ The phrase **"not concurrent with IULMS"** is ambiguous and is **not interpreted
 | **"credentials are never uploaded anywhere"** | **Inaccurate — highest priority** | `Iulms.kt:176-180` | They **are** transmitted to `iulms.edu.pk`. Replace with: *"sent only to the university portal, exactly as a browser does, and nowhere else."* |
 | "there is no central database to breach" | **Accurate but answers the wrong question** | §5.6 | It is true and it is beside the point. Add that the phone becomes the target instead, and disclose the in-memory copy and the sign-out behaviour. |
 | "never uploaded anywhere" + "no backend" used together | **Risky inference** | §6 | Never equate "no backend" with "no risk." List the four residual risks in §6.1. |
-| "It is also in sync with IULMS, since all data is pulled live from the portal." | **Mostly accurate, loosely worded** | §9.2 | "Live" implies push. Use: *"fetched from the portal each time you open a screen; nothing is stored or synced separately."* |
-| "The app doesn't store or sync anything separately." | **Incomplete** | §5.3, §5.5 | It stores credentials when Remember me is on, and does not delete them on sign-out. |
+| "It is also in sync with IULMS, since all data is pulled live from the portal." | **Mostly accurate, loosely worded** | §9.2 | "Live" implies push. Use: *"fetched from the portal each time you open a screen; only the weekly schedule is kept, encrypted, for the home-screen widget."* |
+| "The app doesn't store or sync anything separately." | **Incomplete** | §5.3, §5.4.1, §5.5 | With Remember me on it stores credentials and an encrypted copy of the weekly schedule; sign-out deletes the schedule but not the credentials. |
 | "The difference is convenience." | **Accurate and well-judged** | §2, §3 | Keep. Name the three non-portal features concretely. |
 | "share your result or transcript as an image" | **Accurate but incomplete** | `ShareAcademic.kt:36,65,103` | Add: the image contains your name. |
 | "track your degree progress" | **Accurate, needs a caveat** | `TranscriptAnalytics.kt:3` | It is completed credit hours against a hardcoded total of 136 — not an official eligibility assessment. |
@@ -552,7 +573,7 @@ Also removed from the README: the **Build passing** badge, which asserted a CI s
 >
 > **First, the correction.** I said credentials are "never uploaded anywhere." That was inaccurate and I'm sorry — your password **is** transmitted, because the app has to log in to the portal. It goes over HTTPS to `iulms.edu.pk`, the university, exactly as it does when you type it into Chrome. There is no MyIULMS server, no database of students, and nothing is sent to me. But "sent to the university" and "never uploaded anywhere" are very different sentences, and I should have written the first one.
 >
-> **What actually happens to your data.** With "Remember me" ticked, your registration number and password are stored only on your phone, encrypted using Android Keystore, and excluded from cloud backup and phone-to-phone transfer. With it unticked, nothing is written to disk at all. While you're signed in, the app also holds your credentials in memory — not on disk — so it can log back in by itself when the portal session expires. Session cookies live in memory only. The app requests exactly one Android permission: internet. No analytics, no telemetry, no crash reporting — and you can verify each of those claims in the source, which is public. Once every 6 hours the app checks GitHub for a newer release; that request carries only your IP address and the user-agent `MyIULMS-Android`.
+> **What actually happens to your data.** With "Remember me" ticked, your registration number and password are stored only on your phone, encrypted using Android Keystore, and excluded from cloud backup and phone-to-phone transfer. With it unticked, nothing is written to disk at all. While you're signed in, the app also holds your credentials in memory — not on disk — so it can log back in by itself when the portal session expires. Session cookies live in memory only. With "Remember me" ticked, the app also keeps an encrypted copy of your weekly class schedule so the home-screen widget can show your next class; it is never backed up, and signing out deletes it. The app requests exactly one Android permission: internet. No analytics, no telemetry, no crash reporting — and you can verify each of those claims in the source, which is public. Once every 6 hours the app checks GitHub for a newer release; that request carries only your IP address and the user-agent `MyIULMS-Android`.
 >
 > To be straight about the limits: encrypted storage protects a lost or backed-up phone well. It does **not** protect a rooted phone, or one running software that can read app files. No app can promise "completely secure," and I'm not going to say that.
 >
@@ -573,7 +594,7 @@ Also removed from the README: the **Build passing** badge, which asserted a CI s
 >
 > That's what open source is actually for, and I'd genuinely rather you did that than install something I can't fully vouch for.
 >
-> **On whether it's worth using — you may be right that it isn't.** Every piece of data in it comes from IULMS. There is no new service here and no offline mode. What it adds is a shorter path: it opens straight to your schedule instead of the portal home, skips the SIC pop-ups, and adds three things the portal doesn't have — a countdown to your current or next class, a degree-progress bar, and the ability to share a result, transcript, or schedule as an image. That's the whole list. I won't claim it replaces the portal, that it's innovative, or that it's bug-free; it depends entirely on the portal staying the same, and if IULMS changes, parts of it will break until I fix them.
+> **On whether it's worth using — you may be right that it isn't.** Every piece of data in it comes from IULMS. There is no new service here; the only thing kept offline is an encrypted copy of your weekly schedule for the home-screen widget. What it adds is a shorter path: it opens straight to your schedule instead of the portal home, skips the SIC pop-ups, and adds four things the portal doesn't have — a countdown to your current or next class, a home-screen widget for it, a degree-progress bar, and the ability to share a result, transcript, or schedule as an image. That's the whole list. I won't claim it replaces the portal, that it's innovative, or that it's bug-free; it depends entirely on the portal staying the same, and if IULMS changes, parts of it will break until I fix them.
 >
 > One caveat on that sharing feature: the images include your **name**. Check before posting one publicly.
 >
@@ -619,7 +640,7 @@ Two things worth being explicit about. First, the honest position for a student 
 - `logout()` does **not** call `store.clear()` (`MainViewModel.kt:245-262`).
 - Plaintext credentials are held in `Iulms.kt:165` and `MainViewModel.kt:132,134`.
 - `FLAG_SECURE` appears nowhere in the codebase.
-- No database, no caching, no sync, no offline mode (`app/build.gradle.kts:39-63`; no `@Database`/`@Entity`).
+- No database and no sync. The only cache is the encrypted weekly schedule for the widget: AES-256-GCM under a non-exportable Keystore key, in `noBackupFilesDir`, written only with Remember me on, deleted with its key on sign-out (`data/PortalCache.kt`, `data/PortalRepository.kt`; re-checked at `e773e2b`).
 - Two WebViews exist, both for voucher rendering (`VoucherDownload.kt:150`, `VoucherPrintActivity.kt:222`); neither is used for login.
 - The GitHub update check is automatic on login, throttled to 6 hours, and uses a separate cookie-less `OkHttpClient` (`MainActivity.kt:156-160`, `MainViewModel.kt:98-114`, `UpdateChecker.kt:27-41`).
 - Shared PNGs include the student's name (`ShareAcademic.kt:231`).
