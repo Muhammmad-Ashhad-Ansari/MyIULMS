@@ -48,7 +48,7 @@ import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import com.example.myiulms.MainActivity
 import com.example.myiulms.R
-import com.example.myiulms.data.PortalRepository
+import com.example.myiulms.appContainer
 import com.example.myiulms.ui.theme.DarkColors
 import com.example.myiulms.ui.theme.LightColors
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -86,7 +86,7 @@ class NextClassWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val session = NextClassWidgetSession.signedIn(context)
         // Reads the encrypted cache only: no login, no network, no ViewModel.
-        val repository = PortalRepository(context)
+        val repository = context.appContainer.portal
         val initialSchedule = repository.cachedWeeklySchedule()
         provideContent {
             val signedIn by session.collectAsState()

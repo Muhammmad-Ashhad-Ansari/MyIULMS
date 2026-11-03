@@ -145,7 +145,7 @@ class MainActivity : ComponentActivity() {
     private var tabRequest by mutableStateOf<TabRequest?>(null)
 
     // Same instance App() gets from viewModel(): both use this activity's store.
-    private val vm: MainViewModel by viewModels()
+    private val vm: MainViewModel by viewModels { MainViewModel.Factory }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Before super.onCreate: swaps Theme.MyIULMS.Starting for the app theme.
@@ -230,7 +230,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun App(
-    vm: MainViewModel = viewModel(),
+    vm: MainViewModel = viewModel(factory = MainViewModel.Factory),
     darkTheme: Boolean,
     onThemeToggle: () -> Unit,
     tabRequest: TabRequest? = null,

@@ -14,7 +14,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.myiulms.data.PortalRepository
 import com.example.myiulms.ui.widget.NextClassWidgetSession
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -37,10 +42,33 @@ sealed interface PhotoState {
     data object Unavailable : PhotoState
 }
 
-class MainViewModel(app: Application) : AndroidViewModel(app) {
-    private val client = IulmsSession.client
-    private val store = SecureStore(app)
-    private val portal = PortalRepository(app)
+class MainViewModel(
+    app: Application,
+    private val client: IulmsClient,
+    private val store: SecureStore,
+    private val portal: PortalRepository
+) : AndroidViewModel(app) {
+
+    companion object {
+        /** Builds the ViewModel from the app's shared dependencies (AppContainer). */
+        val Factory: ViewModelProvider.Factory = viewModelFactory {
+            initializer {
+                val app = this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY] as MyIulmsApp
+                MainViewModel(app, app.container.client, app.container.secureStore, app.container.portal)
+            }
+        }
+    }
+
+    /**
+     * Everything that fetches or shows one student's data runs in this scope:
+     * tab loads, vouchers, the name refresh and the photo. Ending the session
+     * cancels it, so a response still in flight for the previous student
+     * resumes into a CancellationException and never reaches the UI state.
+     * A child of viewModelScope: Main dispatcher, and cleared with the ViewModel.
+     */
+    private var sessionJob = SupervisorJob(viewModelScope.coroutineContext[Job])
+    private val sessionScope: CoroutineScope
+        get() = CoroutineScope(viewModelScope.coroutineContext + sessionJob)
     private var updateCheckJob: Job? = null
     private val sharedPreferences: SharedPreferences
         get() = getApplication<Application>().getSharedPreferences("myilms_update_check", Context.MODE_PRIVATE)
@@ -59,6 +87,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             loggedInState = value
             // Either outcome ends a cached session: signed in for real, or out.
             offlineSession = false
+            // Signed out or expired: stop the old session's work and drop its
+            // data, so whoever signs in next starts clean.
+            if (!value) clearSessionState()
             NextClassWidgetSession.onAuthChanged(getApplication(), value)
         }
 
@@ -246,6 +277,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 block()
                 onSuccess?.invoke()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: EvaluationRequiredException) {
                 // Defensive net: doLogin gate khud handle karta hai (remember-me
                 // save ke saath). Yahan bas flag ensure hota hai; loggedIn jo
@@ -269,13 +302,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         if (screenLoadStates[screen]?.loading == true) return
 
-        viewModelScope.launch {
+        sessionScope.launch {
             updateScreenState(screen) { screenStateLoading(it) }
             try {
                 block()
                 val now = System.currentTimeMillis()
                 updateScreenState(screen) { screenStateSuccess() }
                 if (showRefreshFeedback) lastUpdatedAt = now
+            } catch (e: CancellationException) {
+                // Session ended mid-load: no error card, no state write.
+                throw e
             } catch (e: EvaluationRequiredException) {
                 // Gate = actionable state, error NAHI: errorMsg (global banner) par
                 // nahi chadhta, taake UI "Connection problem" na dikhaye.
@@ -367,6 +403,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun logout() {
         client.logout()
         portal.clear()
+        clearSessionState()
+        errorMsg = null
+        loggedIn = false
+    }
+
+    /**
+     * Cancels the session's in-flight work, then drops every piece of the
+     * previous student's state. Runs on sign-out and on session expiry (via the
+     * loggedIn setter); idempotent. Main thread only.
+     */
+    private fun clearSessionState() {
+        sessionJob.cancel()
+        sessionJob = SupervisorJob(viewModelScope.coroutineContext[Job])
         examResult = null
         examSchedule = null
         clearWeeklySchedule()
@@ -374,15 +423,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         vouchers = null
         downloadingVoucherNumber = null
         voucherActionError = null
+        lastVoucherAction = null
+        // Also clears loading flags of the cancelled loads, which would otherwise
+        // block the next session's first load of those tabs.
         screenLoadStates = emptyMap()
         transcript = null
         studentName = null
         loggedInUser = null
         _studentIdentity.value = null
         resetStudentPhoto()
-        errorMsg = null
         evaluationRequired = false
-        loggedIn = false
     }
 
     fun loadExamResult(showRefreshFeedback: Boolean = false) = launchScreenTask(2, showRefreshFeedback) {
@@ -438,7 +488,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         if (downloadingVoucherNumber != null) return
 
-        viewModelScope.launch {
+        sessionScope.launch {
             lastVoucherAction = voucher
             voucherActionError = null
             downloadingVoucherNumber = voucher.number
@@ -471,6 +521,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
                     context.startActivity(intent)
                 }
+            } catch (e: CancellationException) {
+                // Signed out mid-download: never open the previous student's voucher.
+                throw e
             } catch (e: EvaluationRequiredException) {
                 // Gate active: koi misleading voucher error nahi — screen-4 ka
                 // gate card hi yahan sahi affordance hai.
@@ -551,7 +604,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // se wapas lao. Yahan har failure silent hai (naam cosmetic hai): gate ya
     // session error asli tab-load path se hi dikhte hain.
     private fun refreshStudentName() {
-        viewModelScope.launch {
+        sessionScope.launch {
             val identity = withContext(Dispatchers.IO) {
                 try {
                     parseStudentIdentity(client.getHtml("/"))
@@ -583,7 +636,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         _photoState.value = PhotoState.Loading
-        photoJob = viewModelScope.launch {
+        photoJob = sessionScope.launch {
             val bitmap = client.getProfilePhoto(moodleUserId)?.let { bytes ->
                 withContext(Dispatchers.Default) { decodeStudentPhoto(bytes) }
             }

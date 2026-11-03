@@ -4,7 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import androidx.glance.appwidget.updateAll
-import com.example.myiulms.data.PortalRepository
+import com.example.myiulms.appContainer
 import com.example.myiulms.ui.widget.NextClassRefresh
 import com.example.myiulms.ui.widget.NextClassWidget
 import com.example.myiulms.ui.widget.NextClassWidgetSession
@@ -49,7 +49,7 @@ class WidgetUpdateReceiver : BroadcastReceiver() {
     private suspend fun postDueNotifications(context: Context) {
         if (!ReminderSettings.isEnabled(context)) return
         if (!NextClassWidgetSession.signedIn(context).value) return
-        val entries = PortalRepository(context).cachedWeeklySchedule()?.payload?.entries ?: return
+        val entries = context.appContainer.portal.cachedWeeklySchedule()?.payload?.entries ?: return
         val now = System.currentTimeMillis()
         dueNotifications(entries, now, ReminderSettings.handledUntil(context))
             .forEach { ClassReminderNotifier.show(context, it, entries, now) }

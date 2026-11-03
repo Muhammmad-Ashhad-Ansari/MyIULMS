@@ -123,7 +123,7 @@ import kotlinx.coroutines.launch
 
 class EvaluationActivity : ComponentActivity() {
 
-    private val vm: EvaluationViewModel by viewModels()
+    private val vm: EvaluationViewModel by viewModels { EvaluationViewModel.Factory }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

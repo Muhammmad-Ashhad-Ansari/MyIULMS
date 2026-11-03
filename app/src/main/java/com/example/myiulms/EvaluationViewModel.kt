@@ -9,6 +9,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,11 +45,11 @@ sealed interface EvaluationEvent {
 // hota (single-use, session-bound).
 class EvaluationViewModel(
     app: Application,
-    private val savedState: SavedStateHandle
+    private val savedState: SavedStateHandle,
+    private val client: IulmsClient,
+    private val secureStore: SecureStore
 ) : AndroidViewModel(app) {
 
-    private val client = IulmsSession.client
-    private val secureStore = SecureStore(app)
     private val sessionMutex = Mutex()
 
     var courses by mutableStateOf<List<EvaluationCourse>?>(null)
@@ -384,13 +388,22 @@ class EvaluationViewModel(
         )
     }
 
-    private companion object {
-        const val TAG = "EvaluationViewModel"
-        const val KEY_COURSE_ID = "eval_course_id"
-        const val KEY_COURSE_TITLE = "eval_course_title"
-        const val KEY_COURSE_INSTRUCTOR = "eval_course_instructor"
-        const val KEY_ANSWERS = "eval_answers"
-        const val KEY_COMMENTS = "eval_comments"
+    // Public for the Factory; the constants stay private.
+    companion object {
+        /** Shared client and store from AppContainer, plus this screen's SavedStateHandle. */
+        val Factory: ViewModelProvider.Factory = viewModelFactory {
+            initializer {
+                val app = this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY] as MyIulmsApp
+                EvaluationViewModel(app, createSavedStateHandle(), app.container.client, app.container.secureStore)
+            }
+        }
+
+        private const val TAG = "EvaluationViewModel"
+        private const val KEY_COURSE_ID = "eval_course_id"
+        private const val KEY_COURSE_TITLE = "eval_course_title"
+        private const val KEY_COURSE_INSTRUCTOR = "eval_course_instructor"
+        private const val KEY_ANSWERS = "eval_answers"
+        private const val KEY_COMMENTS = "eval_comments"
     }
 }
 

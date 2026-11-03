@@ -6,7 +6,7 @@ import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import com.example.myiulms.data.PortalRepository
+import com.example.myiulms.appContainer
 import com.example.myiulms.ui.widget.NextClassWidgetReceiver
 import com.example.myiulms.ui.widget.NextClassWidgetSession
 
@@ -35,7 +35,7 @@ object WidgetAlarmScheduler {
         val widgetEvents = hasWidgets(app)
         val reminders = ReminderSettings.isEnabled(app)
         val entries = if (signedIn && (widgetEvents || reminders)) {
-            PortalRepository(app).cachedWeeklySchedule()?.payload?.entries
+            app.appContainer.portal.cachedWeeklySchedule()?.payload?.entries
         } else {
             null
         }
