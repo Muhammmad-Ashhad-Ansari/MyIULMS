@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Splash logo: the launcher's white building artwork, tinted per mode via
+     @color/splash_logo (brand navy on the light splash, white on the dark one),
+     so it never disappears into the background. -->
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:src="@drawable/ic_launcher_foreground"
+    android:tint="@color/splash_logo"
+    android:tintMode="src_in" />

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Must equal DarkBackground in ui/theme/Color.kt. -->
+    <color name="app_background">#FF0C1116</color>
+    <!-- Splash logo on the dark background: white, as before. -->
+    <color name="splash_logo">#FFFFFFFF</color>
+</resources>

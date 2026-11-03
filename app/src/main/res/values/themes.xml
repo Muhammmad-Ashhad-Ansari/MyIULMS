@@ -1,5 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.MyIULMS" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- windowBackground matches the Compose background in each mode
+         (@color/app_background has a values-night variant), so nothing of a
+         different colour shows between the splash and the first frame. -->
+    <style name="Theme.MyIULMS" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/app_background</item>
+    </style>
+
+    <!-- MainActivity's launch theme: the system splash, held by
+         installSplashScreen().setKeepOnScreenCondition until the remembered
+         login has been read, then swapped for Theme.MyIULMS. Background and
+         logo colours both switch with the system light/dark mode through
+         values / values-night colors; no icon backdrop, the logo sits directly
+         on the background with high contrast in both. -->
+    <style name="Theme.MyIULMS.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/app_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_logo</item>
+        <item name="postSplashScreenTheme">@style/Theme.MyIULMS</item>
+    </style>
 </resources>

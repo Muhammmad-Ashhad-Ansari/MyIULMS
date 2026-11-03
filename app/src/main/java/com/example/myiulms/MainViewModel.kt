@@ -192,15 +192,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private set
     private var lastVoucherAction: Voucher? = null
 
+    /**
+     * True until the remembered login (and, with it, the saved schedule) has been
+     * read. The UI shows a plain background meanwhile, so neither the login
+     * screen nor the home screen flashes up before the right one is known.
+     */
+    var restoringSession by mutableStateOf(true)
+        private set
+
     init {
-        val saved = store.load()
-        if (saved != null) {
-            savedUser = saved.first
-            savedPassword = saved.second
-            // Instant launch: draw the saved schedule while the sign-in runs. A
-            // local read, so it normally lands well before the network login.
-            viewModelScope.launch { restoreSavedSchedule(saved.first) }
-            launchTask { doLogin(saved.first, saved.second, true) }
+        // The encrypted store (EncryptedSharedPreferences + Android Keystore) is
+        // opened here for the first time, which blocked the main thread for
+        // ~85 ms of the first frame. It now runs on IO; the first frame draws at
+        // once and the session is restored a moment later.
+        viewModelScope.launch {
+            val saved = withContext(Dispatchers.IO) { runCatching { store.load() }.getOrNull() }
+            if (saved != null) {
+                savedUser = saved.first
+                savedPassword = saved.second
+                // Instant launch: read the saved schedule before revealing any
+                // screen, so a cached session opens straight onto it.
+                restoreSavedSchedule(saved.first)
+                launchTask { doLogin(saved.first, saved.second, true) }
+            }
+            restoringSession = false
         }
     }
 
@@ -323,11 +338,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             applyStudentIdentity(identity)
 
             if (remember) {
-                store.save(user, pass)
+                withContext(Dispatchers.IO) { store.save(user, pass) }
                 savedUser = user
                 savedPassword = pass
             } else {
-                store.clear()
+                withContext(Dispatchers.IO) { store.clear() }
                 savedUser = null
                 savedPassword = null
             }

@@ -5,6 +5,15 @@ import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.viewModels
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.core.splashscreen.SplashScreenViewProvider
+import androidx.core.animation.doOnEnd
+import android.animation.Animator
+import android.animation.AnimatorSet
+import android.animation.ObjectAnimator
+import android.view.View
+import android.view.animation.AccelerateInterpolator
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -129,10 +138,23 @@ import kotlinx.coroutines.launch
  */
 class TabRequest(val tab: Int)
 
+private const val SPLASH_EXIT_MILLIS = 300L
+private const val SPLASH_ICON_END_SCALE = 0.85f
+
 class MainActivity : ComponentActivity() {
     private var tabRequest by mutableStateOf<TabRequest?>(null)
 
+    // Same instance App() gets from viewModel(): both use this activity's store.
+    private val vm: MainViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Before super.onCreate: swaps Theme.MyIULMS.Starting for the app theme.
+        // The system splash stays up until the remembered login has been read on
+        // IO, so the first thing drawn is the right screen, not a blank frame.
+        installSplashScreen().apply {
+            setKeepOnScreenCondition { vm.restoringSession }
+            setOnExitAnimationListener(::animateSplashExit)
+        }
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         // Cold start. Skipped on recreation (rotation, process restore), where
@@ -167,6 +189,29 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Splash exit: the icon eases down to 85% while the whole splash fades out,
+     * revealing the already-drawn schedule beneath. 300 ms, accelerating, so it
+     * starts gently and gets out of the way. Animators follow the system
+     * animation scale, so "Remove animations" makes this instant.
+     */
+    private fun animateSplashExit(provider: SplashScreenViewProvider) {
+        val splash = provider.view
+        val animators = mutableListOf<Animator>(ObjectAnimator.ofFloat(splash, View.ALPHA, 1f, 0f))
+        // Shell- or system-started launches can show an icon-less splash.
+        runCatching { provider.iconView }.getOrNull()?.let { icon ->
+            animators += ObjectAnimator.ofFloat(icon, View.SCALE_X, 1f, SPLASH_ICON_END_SCALE)
+            animators += ObjectAnimator.ofFloat(icon, View.SCALE_Y, 1f, SPLASH_ICON_END_SCALE)
+        }
+        AnimatorSet().apply {
+            playTogether(animators)
+            duration = SPLASH_EXIT_MILLIS
+            interpolator = AccelerateInterpolator()
+            doOnEnd { provider.remove() }
+            start()
+        }
+    }
+
     // Warm start: the widget's CLEAR_TOP | SINGLE_TOP intent lands here when
     // this activity is already running.
     override fun onNewIntent(intent: Intent) {
@@ -192,7 +237,11 @@ fun App(
     onTabRequestHandled: () -> Unit = {}
 ) {
     val context = LocalContext.current
-    if (vm.showHome) {
+    if (vm.restoringSession) {
+        // A frame or two while the remembered login is read off the main
+        // thread: the theme background, which matches the system splash.
+        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
+    } else if (vm.showHome) {
         // A request made while signed out waits here until the home screen exists.
         HomeScreen(vm, darkTheme, onThemeToggle, tabRequest, onTabRequestHandled)
     } else {
