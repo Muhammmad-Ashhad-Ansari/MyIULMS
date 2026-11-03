@@ -8,27 +8,47 @@ import android.os.Build
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Class-reminder preferences: whether the student turned reminders on, whether
- * the banner was dismissed, and when the receiver last posted notifications.
- * No personal data, so it can follow normal backup rules.
+ * Class-reminder preferences: whether reminders are on (default: on; the
+ * overflow-menu switch turns them off), whether the permission banner was
+ * dismissed, and when the receiver last posted notifications. No personal
+ * data, so it can follow normal backup rules.
  */
 object ReminderSettings {
     private const val PREFS = "iulms_reminders"
     private const val KEY_ENABLED = "enabled"
     private const val KEY_BANNER_DISMISSED = "banner_dismissed"
     private const val KEY_HANDLED_UNTIL = "handled_until"
+    private const val DEFAULT_ENABLED = true
 
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    fun isEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_ENABLED, false)
+    @Volatile
+    private var enabledState: MutableStateFlow<Boolean>? = null
+
+    private fun enabledFlow(context: Context): MutableStateFlow<Boolean> =
+        enabledState ?: synchronized(this) {
+            enabledState ?: MutableStateFlow(prefs(context).getBoolean(KEY_ENABLED, DEFAULT_ENABLED))
+                .also { enabledState = it }
+        }
+
+    fun isEnabled(context: Context): Boolean = enabledFlow(context).value
+
+    /** For the switch and the banner, so both follow a change made in either. */
+    fun enabled(context: Context): StateFlow<Boolean> = enabledFlow(context).asStateFlow()
 
     // Turning on starts from now, so nothing that already happened is announced.
-    fun setEnabled(context: Context, enabled: Boolean) = prefs(context).edit {
-        putBoolean(KEY_ENABLED, enabled)
-        if (enabled) putLong(KEY_HANDLED_UNTIL, System.currentTimeMillis())
+    fun setEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit {
+            putBoolean(KEY_ENABLED, enabled)
+            if (enabled) putLong(KEY_HANDLED_UNTIL, System.currentTimeMillis())
+        }
+        enabledFlow(context).value = enabled
     }
 
     fun isBannerDismissed(context: Context): Boolean = prefs(context).getBoolean(KEY_BANNER_DISMISSED, false)

@@ -43,6 +43,10 @@ import androidx.compose.material.icons.automirrored.rounded.ReceiptLong
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material.icons.rounded.NotificationsOff
+import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
@@ -96,7 +100,8 @@ import com.example.myiulms.ui.dashboard.nextFocusTickDelayMillis
 import com.example.myiulms.ui.dashboard.normalizeDay
 import com.example.myiulms.ui.dashboard.resolveScheduleFocus
 import com.example.myiulms.ui.dashboard.scheduleFreshnessNote
-import com.example.myiulms.ui.dashboard.ClassAlertsBanner
+import com.example.myiulms.ui.dashboard.ScheduleTips
+import com.example.myiulms.alarms.ReminderSettings
 import com.example.myiulms.ui.widget.NextClassWidgetSession
 import com.example.myiulms.ui.dashboard.todayAbbrev
 import com.example.myiulms.ui.policy.AcademicPolicyHost
@@ -1177,6 +1182,7 @@ private fun PortalTopBar(
                         }
                     )
                     PolicyOverflowItem(onDismissMenu = { menuExpanded = false })
+                    ClassRemindersMenuItem()
 
                     // Last on purpose. Sign out is the only destructive action in
                     // this menu, so it sits below the two informational entries
@@ -1210,6 +1216,48 @@ private fun PortalTopBar(
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.background
         )
+    )
+}
+
+/**
+ * "Class reminders" on/off, in the overflow menu with the other app-wide
+ * settings. Off stops the notifications at once: the next alarm is re-armed as
+ * a silent widget-only one (start, end, midnight). The menu stays open so the
+ * switch visibly flips.
+ */
+@Composable
+private fun ClassRemindersMenuItem() {
+    val context = LocalContext.current
+    val enabled by ReminderSettings.enabled(context).collectAsState()
+    DropdownMenuItem(
+        text = { Text("Class reminders") },
+        leadingIcon = {
+            Icon(
+                if (enabled) Icons.Rounded.NotificationsActive else Icons.Rounded.NotificationsOff,
+                contentDescription = null
+            )
+        },
+        trailingIcon = {
+            // Display only: the whole row is the toggle target. Off-state colours
+            // are explicit: the M3 defaults put a near-invisible thumb on this
+            // theme's dark menu surface.
+            Switch(
+                checked = enabled,
+                onCheckedChange = null,
+                colors = SwitchDefaults.colors(
+                    uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    uncheckedTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    uncheckedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            )
+        },
+        onClick = {
+            ReminderSettings.setEnabled(context, !enabled)
+            NextClassWidgetSession.rescheduleAlarms(context)
+        },
+        modifier = Modifier.semantics {
+            stateDescription = if (enabled) "On" else "Off"
+        }
     )
 }
 
@@ -1472,7 +1520,7 @@ private fun SchedulesScreen(
             }
         }
 
-        ClassAlertsBanner(modifier = Modifier.padding(horizontal = 18.dp, vertical = AppSpacing.Xs))
+        ScheduleTips(modifier = Modifier.padding(horizontal = 18.dp, vertical = AppSpacing.Xs))
 
         Box(modifier = Modifier.weight(1f)) {
             if (selectedSubTab == 0) {
