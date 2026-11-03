@@ -182,7 +182,7 @@ MyIULMS/
 
 **MyIULMS is unofficial.** It is a student project, not built or approved by Iqra University, and not a replacement for IULMS.
 
-**Where your login goes.** Signing in sends your registration number and password over HTTPS to `iulms.edu.pk`, exactly as a browser would. MyIULMS has no server and no student database, so nothing is sent to the project or any third party. Credentials are entered by you and are never hard-coded in source. The app requests one Android permission: internet — no analytics, telemetry, or crash reporting.
+**Where your login goes.** Signing in sends your registration number and password over HTTPS to `iulms.edu.pk`, exactly as a browser would. MyIULMS has no server and no student database, so nothing is sent to the project or any third party. Credentials are entered by you and are never hard-coded in source. The app needs internet access. If you turn on class reminders, it also asks to post notifications (Android 13+) and for exact-alarm access (granted in Settings), and it holds the run-at-startup permission only to re-arm the next reminder after a reboot. Reminders are built on the phone from the cached schedule — nothing is sent anywhere. No analytics, telemetry, or crash reporting.
 
 **What is stored on your device.**
 

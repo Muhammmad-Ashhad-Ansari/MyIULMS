@@ -3,6 +3,7 @@ package com.example.myiulms.ui.widget
 import android.content.Context
 import androidx.core.content.edit
 import androidx.glance.appwidget.updateAll
+import com.example.myiulms.alarms.WidgetAlarmScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -48,13 +49,21 @@ object NextClassWidgetSession {
         // Covers widgets with no running session; ones on screen already
         // recomposed from the flow above.
         scope.launch { runCatching { NextClassWidget().updateAll(app) } }
+        // Signed out: cancels the alarm (and with it any pending reminder).
+        rescheduleAlarms(app)
     }
 
-    /** The cached schedule changed: re-read it in every widget. */
+    /** The cached schedule changed: re-read it in every widget and re-arm the alarm. */
     fun onDataChanged(context: Context) {
         val app = context.applicationContext
         NextClassRefresh.ticks.update { it + 1 }
         scope.launch { runCatching { NextClassWidget().updateAll(app) } }
+        rescheduleAlarms(app)
+    }
+
+    fun rescheduleAlarms(context: Context) {
+        val app = context.applicationContext
+        scope.launch { runCatching { WidgetAlarmScheduler.reschedule(app) } }
     }
 
     private fun flow(context: Context): MutableStateFlow<Boolean> =

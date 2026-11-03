@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- updatePeriodMillis: 30 min (platform minimum) so the mock state moves on
-     without a tap; class-boundary refresh arrives with the K2 alarm work. -->
+<!-- Class starts, ends and midnight are refreshed by the schedule alarm
+     (alarms/WidgetAlarmScheduler); updatePeriodMillis (30 min, the platform
+     minimum) is only a safety net if that alarm is ever missed. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/next_class_widget_description"
     android:initialLayout="@layout/glance_default_loading_layout"

@@ -96,6 +96,8 @@ import com.example.myiulms.ui.dashboard.nextFocusTickDelayMillis
 import com.example.myiulms.ui.dashboard.normalizeDay
 import com.example.myiulms.ui.dashboard.resolveScheduleFocus
 import com.example.myiulms.ui.dashboard.scheduleFreshnessNote
+import com.example.myiulms.ui.dashboard.ClassAlertsBanner
+import com.example.myiulms.ui.widget.NextClassWidgetSession
 import com.example.myiulms.ui.dashboard.todayAbbrev
 import com.example.myiulms.ui.policy.AcademicPolicyHost
 import com.example.myiulms.ui.policy.LocalAcademicPolicyState
@@ -132,6 +134,8 @@ class MainActivity : ComponentActivity() {
         // the launch intent still carries the extra but the student may since
         // have moved to another tab.
         if (savedInstanceState == null) consumeTabRequest(intent)
+        // Launch: re-arm the schedule alarm in case it was lost (force-stop clears it).
+        NextClassWidgetSession.rescheduleAlarms(this)
 
         val uiPrefs = getSharedPreferences("iulms_ui", MODE_PRIVATE)
 
@@ -1467,6 +1471,8 @@ private fun SchedulesScreen(
                 Text("Exam Schedule")
             }
         }
+
+        ClassAlertsBanner(modifier = Modifier.padding(horizontal = 18.dp, vertical = AppSpacing.Xs))
 
         Box(modifier = Modifier.weight(1f)) {
             if (selectedSubTab == 0) {
