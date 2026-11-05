@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar icon: bold, simplified MyIULMS building on the 24dp status-bar
+     grid, sized to sit with solid system glyphs. White only (Android renders it
+     from alpha and tints it). Each shape is drawn inset and stroked with round
+     joins, which rounds every corner by 0.4 units. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="0.8"
+        android:strokeLineJoin="round"
+        android:pathData="M5.99,2.40L18.01,2.40L17.53,3.60L6.47,3.60ZM2.15,5.40L7.80,5.40L7.80,17.20L6.60,17.20L6.60,6.40L2.49,6.40ZM21.51,6.40L17.40,6.40L17.40,17.20L16.20,17.20L16.20,5.40L21.85,5.40ZM9.60,5.40L10.80,5.40L10.80,17.20L9.60,17.20ZM13.20,5.40L14.40,5.40L14.40,17.20L13.20,17.20ZM2.00,8.20L3.00,8.20L3.00,17.20L2.00,17.20ZM21.00,8.20L22.00,8.20L22.00,17.20L21.00,17.20ZM4.60,9.00L5.00,9.00L5.00,10.40L4.60,10.40ZM19.00,9.00L19.40,9.00L19.40,10.40L19.00,10.40ZM4.60,12.80L5.00,12.80L5.00,14.20L4.60,14.20ZM19.00,12.80L19.40,12.80L19.40,14.20L19.00,14.20ZM5.08,18.80L18.92,18.80L19.22,19.60L4.78,19.60ZM1.40,21.20L22.60,21.20L22.60,22.20L1.40,22.20Z" />
+</vector>

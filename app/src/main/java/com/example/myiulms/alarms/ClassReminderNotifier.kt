@@ -74,12 +74,12 @@ object ClassReminderNotifier {
         )
         // Lock screen shows only this; course and room stay private.
         val publicVersion = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification_class)
+            .setSmallIcon(R.drawable.ic_stat_myiulms)
             .setContentTitle("Class update")
             .build()
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification_class)
+            .setSmallIcon(R.drawable.ic_stat_myiulms)
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
