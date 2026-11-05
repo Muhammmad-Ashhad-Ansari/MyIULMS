@@ -52,7 +52,7 @@ class WidgetUpdateReceiver : BroadcastReceiver() {
         if (!NextClassWidgetSession.signedIn(context).value) return
         val entries = context.appContainer.portal.cachedWeeklySchedule()?.payload?.entries ?: return
         val now = System.currentTimeMillis()
-        dueNotifications(entries, now, ReminderSettings.handledUntil(context))
+        dueNotifications(entries, now, ReminderSettings.handledUntil(context), ReminderSettings.leadMinutes(context))
             .forEach { ClassReminderNotifier.show(context, it, now) }
         ReminderSettings.setHandledUntil(context, now)
     }

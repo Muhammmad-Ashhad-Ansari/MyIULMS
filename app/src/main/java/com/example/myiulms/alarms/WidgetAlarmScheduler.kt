@@ -40,7 +40,7 @@ object WidgetAlarmScheduler {
             null
         }
         val event = entries?.let {
-            nextScheduleEvent(it, System.currentTimeMillis(), widgetEvents, reminders)
+            nextScheduleEvent(it, System.currentTimeMillis(), widgetEvents, reminders, ReminderSettings.leadMinutes(app))
         }
         if (event == null) {
             alarmManager.cancel(pendingIntent)

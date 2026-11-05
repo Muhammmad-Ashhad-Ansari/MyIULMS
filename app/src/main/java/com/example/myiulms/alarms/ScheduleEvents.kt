@@ -21,8 +21,11 @@ import java.util.Locale
  * to refresh the home-screen widget.
  */
 
-/** Minutes before a class that its reminder fires. */
-const val REMINDER_LEAD_MINUTES = 10L
+/** Default minutes before a class that its reminder fires. */
+const val DEFAULT_REMINDER_LEAD_MINUTES = 10L
+
+/** The lead times a student can choose from (Settings: "Remind me"). */
+val REMINDER_LEAD_OPTIONS: List<Long> = listOf(5L, 10L, 15L)
 private const val MINUTE_MILLIS = 60_000L
 
 /** The only stages that ever post a notification. */
@@ -35,7 +38,7 @@ private val NotifyingStages = setOf(ScheduleEventType.Reminder, ScheduleEventTyp
 private const val STAGE_GRACE_MILLIS = 10 * MINUTE_MILLIS
 
 enum class ScheduleEventType {
-    /** [REMINDER_LEAD_MINUTES] before a class. */
+    /** The chosen lead time before a class (default [DEFAULT_REMINDER_LEAD_MINUTES]). */
     Reminder,
     /** Exact class start: widget flips to NOW. */
     ClassStart,
@@ -92,12 +95,13 @@ fun scheduleEvents(
     nowMillis: Long,
     widgetEvents: Boolean,
     reminders: Boolean,
+    leadMinutes: Long = DEFAULT_REMINDER_LEAD_MINUTES,
     zone: ZoneId = CampusZone
 ): List<ScheduleEvent> = buildList {
     if (!widgetEvents && !reminders) return@buildList
     for (occurrence in classOccurrences(entries, nowMillis, zone)) {
         if (reminders) {
-            add(ScheduleEvent(occurrence.startMillis - REMINDER_LEAD_MINUTES * MINUTE_MILLIS, ScheduleEventType.Reminder, occurrence))
+            add(ScheduleEvent(occurrence.startMillis - leadMinutes * MINUTE_MILLIS, ScheduleEventType.Reminder, occurrence))
         }
         add(ScheduleEvent(occurrence.startMillis, ScheduleEventType.ClassStart, occurrence))
         if (widgetEvents) {
@@ -117,9 +121,10 @@ fun nextScheduleEvent(
     nowMillis: Long,
     widgetEvents: Boolean,
     reminders: Boolean,
+    leadMinutes: Long = DEFAULT_REMINDER_LEAD_MINUTES,
     zone: ZoneId = CampusZone
 ): ScheduleEvent? =
-    scheduleEvents(entries, nowMillis, widgetEvents, reminders, zone).firstOrNull { it.atMillis > nowMillis }
+    scheduleEvents(entries, nowMillis, widgetEvents, reminders, leadMinutes, zone).firstOrNull { it.atMillis > nowMillis }
 
 /**
  * Class notifications to post now: reminder and start stages that happened after
@@ -132,9 +137,10 @@ fun dueNotifications(
     entries: List<WeeklyScheduleEntry>,
     nowMillis: Long,
     handledUntilMillis: Long,
+    leadMinutes: Long = DEFAULT_REMINDER_LEAD_MINUTES,
     zone: ZoneId = CampusZone
 ): List<ScheduleEvent> =
-    scheduleEvents(entries, nowMillis, widgetEvents = false, reminders = true, zone = zone).filter { event ->
+    scheduleEvents(entries, nowMillis, widgetEvents = false, reminders = true, leadMinutes = leadMinutes, zone = zone).filter { event ->
         val occurrence = event.occurrence ?: return@filter false
         event.type in NotifyingStages &&
             event.atMillis in (handledUntilMillis + 1)..nowMillis && when (event.type) {

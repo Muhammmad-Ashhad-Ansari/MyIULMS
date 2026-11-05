@@ -33,6 +33,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -111,6 +112,7 @@ import com.example.myiulms.ui.dashboard.resolveScheduleFocus
 import com.example.myiulms.ui.dashboard.scheduleFreshnessNote
 import com.example.myiulms.ui.dashboard.ScheduleTips
 import com.example.myiulms.alarms.ReminderSettings
+import com.example.myiulms.alarms.REMINDER_LEAD_OPTIONS
 import com.example.myiulms.ui.widget.NextClassWidgetSession
 import com.example.myiulms.ui.dashboard.todayAbbrev
 import com.example.myiulms.ui.policy.AcademicPolicyHost
@@ -1158,6 +1160,11 @@ private fun PortalTopBar(
     onLogout: () -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    // Outside the menu so the dialog survives the menu closing.
+    var showReminderTime by remember { mutableStateOf(false) }
+    if (showReminderTime) {
+        ReminderTimeDialog(onDismiss = { showReminderTime = false })
+    }
 
     TopAppBar(
         title = {
@@ -1232,6 +1239,10 @@ private fun PortalTopBar(
                     )
                     PolicyOverflowItem(onDismissMenu = { menuExpanded = false })
                     ClassRemindersMenuItem()
+                    ReminderTimeMenuItem(onClick = {
+                        menuExpanded = false
+                        showReminderTime = true
+                    })
 
                     // Last on purpose. Sign out is the only destructive action in
                     // this menu, so it sits below the two informational entries
@@ -1307,6 +1318,69 @@ private fun ClassRemindersMenuItem() {
         modifier = Modifier.semantics {
             stateDescription = if (enabled) "On" else "Off"
         }
+    )
+}
+
+/** "Remind me · 10 min before". Disabled while reminders are off. */
+@Composable
+private fun ReminderTimeMenuItem(onClick: () -> Unit) {
+    val context = LocalContext.current
+    val enabled by ReminderSettings.enabled(context).collectAsState()
+    val lead by ReminderSettings.leadMinutesFlow(context).collectAsState()
+    DropdownMenuItem(
+        text = {
+            Column {
+                Text("Remind me")
+                Text(
+                    "$lead min before class",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        leadingIcon = { Icon(Icons.Rounded.Schedule, contentDescription = null) },
+        enabled = enabled,
+        onClick = onClick
+    )
+}
+
+/**
+ * Lead-time picker: 5, 10 or 15 minutes. Applies at once: the alarm is
+ * re-armed for the new reminder time.
+ */
+@Composable
+private fun ReminderTimeDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val current by ReminderSettings.leadMinutesFlow(context).collectAsState()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Remind me before class") },
+        text = {
+            Column(Modifier.selectableGroup()) {
+                REMINDER_LEAD_OPTIONS.forEach { minutes ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .selectable(
+                                selected = minutes == current,
+                                role = Role.RadioButton,
+                                onClick = {
+                                    ReminderSettings.setLeadMinutes(context, minutes)
+                                    NextClassWidgetSession.rescheduleAlarms(context)
+                                    onDismiss()
+                                }
+                            ),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(selected = minutes == current, onClick = null)
+                        Spacer(Modifier.width(AppSpacing.Md))
+                        Text("$minutes minutes")
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 

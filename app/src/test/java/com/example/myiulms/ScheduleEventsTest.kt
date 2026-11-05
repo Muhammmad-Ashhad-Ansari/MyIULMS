@@ -90,6 +90,27 @@ class ScheduleEventsTest {
     }
 
     @Test
+    fun `reminder follows the chosen lead time`() {
+        for (lead in listOf(5L, 15L)) {
+            val event = nextScheduleEvent(week, monday(11, 0), widgetEvents = false, reminders = true, leadMinutes = lead)!!
+            assertEquals(monday(11, 35) - lead * 60_000L to ScheduleEventType.Reminder, event.atMillis to event.type)
+        }
+    }
+
+    @Test
+    fun `a 15 minute reminder is due inside its own window, not before`() {
+        assertTrue(dueNotifications(week, monday(11, 19), monday(11, 0), leadMinutes = 15).isEmpty())
+        val due = dueNotifications(week, monday(11, 20), monday(11, 0), leadMinutes = 15)
+        assertEquals(listOf(ScheduleEventType.Reminder), due.map { it.type })
+    }
+
+    @Test
+    fun `a 5 minute reminder does not fire at the 10 minute mark`() {
+        assertTrue(dueNotifications(week, monday(11, 25), monday(11, 0), leadMinutes = 5).isEmpty())
+        assertEquals(1, dueNotifications(week, monday(11, 30), monday(11, 0), leadMinutes = 5).size)
+    }
+
+    @Test
     fun `a class end never posts a notification`() {
         // 12:50 is the end of DATABASE SYSTEMS; nothing else happens near it.
         assertTrue(dueNotifications(week, monday(12, 51), handledUntilMillis = monday(12, 49)).isEmpty())

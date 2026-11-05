@@ -23,6 +23,7 @@ object ReminderSettings {
     private const val KEY_ENABLED = "enabled"
     private const val KEY_BANNER_DISMISSED = "banner_dismissed"
     private const val KEY_HANDLED_UNTIL = "handled_until"
+    private const val KEY_LEAD_MINUTES = "lead_minutes"
     private const val DEFAULT_ENABLED = true
 
     private fun prefs(context: Context) =
@@ -49,6 +50,28 @@ object ReminderSettings {
             if (enabled) putLong(KEY_HANDLED_UNTIL, System.currentTimeMillis())
         }
         enabledFlow(context).value = enabled
+    }
+
+    @Volatile
+    private var leadState: MutableStateFlow<Long>? = null
+
+    private fun leadFlow(context: Context): MutableStateFlow<Long> =
+        leadState ?: synchronized(this) {
+            leadState ?: MutableStateFlow(
+                prefs(context).getLong(KEY_LEAD_MINUTES, DEFAULT_REMINDER_LEAD_MINUTES)
+                    .takeIf { it in REMINDER_LEAD_OPTIONS } ?: DEFAULT_REMINDER_LEAD_MINUTES
+            ).also { leadState = it }
+        }
+
+    /** Minutes before class that the reminder fires; always one of [REMINDER_LEAD_OPTIONS]. */
+    fun leadMinutes(context: Context): Long = leadFlow(context).value
+
+    fun leadMinutesFlow(context: Context): StateFlow<Long> = leadFlow(context).asStateFlow()
+
+    fun setLeadMinutes(context: Context, minutes: Long) {
+        require(minutes in REMINDER_LEAD_OPTIONS) { "Unsupported reminder lead time: $minutes" }
+        prefs(context).edit { putLong(KEY_LEAD_MINUTES, minutes) }
+        leadFlow(context).value = minutes
     }
 
     fun isBannerDismissed(context: Context): Boolean = prefs(context).getBoolean(KEY_BANNER_DISMISSED, false)
