@@ -36,7 +36,7 @@ class ScheduleEventsTest {
     // ---- the three-stage hop ----
 
     @Test
-    fun `alarm hops reminder, start, end for each class`() {
+    fun `with a widget the alarm hops reminder, start, end for each class`() {
         val reminder = next(monday(11, 0))!!
         assertEquals(monday(11, 25) to ScheduleEventType.Reminder, reminder.atMillis to reminder.type)
         val start = next(reminder.atMillis)!!
@@ -83,9 +83,29 @@ class ScheduleEventsTest {
     }
 
     @Test
-    fun `a slightly late alarm still posts, a long-missed one does not`() {
-        assertEquals(1, dueNotifications(week, monday(12, 55), handledUntilMillis = monday(12, 0)).size)
-        assertTrue(dueNotifications(week, monday(13, 30), handledUntilMillis = monday(12, 0)).isEmpty())
+    fun `a slightly late start still posts, a long-missed one does not`() {
+        val late = dueNotifications(week, monday(11, 42), handledUntilMillis = monday(11, 30))
+        assertEquals(listOf(ScheduleEventType.ClassStart), late.map { it.type })
+        assertTrue(dueNotifications(week, monday(13, 30), handledUntilMillis = monday(11, 30)).isEmpty())
+    }
+
+    @Test
+    fun `a class end never posts a notification`() {
+        // 12:50 is the end of DATABASE SYSTEMS; nothing else happens near it.
+        assertTrue(dueNotifications(week, monday(12, 51), handledUntilMillis = monday(12, 49)).isEmpty())
+        assertTrue(dueNotifications(week, monday(12, 50), handledUntilMillis = monday(12, 0)).isEmpty())
+    }
+
+    @Test
+    fun `without a widget the alarm skips class ends entirely`() {
+        val afterStart = next(monday(11, 35), widget = false)!!
+        assertEquals(monday(13, 50) to ScheduleEventType.Reminder, afterStart.atMillis to afterStart.type)
+    }
+
+    @Test
+    fun `with a widget the class end stays as a silent refresh`() {
+        val afterStart = next(monday(11, 35), widget = true)!!
+        assertEquals(monday(12, 50) to ScheduleEventType.ClassEnd, afterStart.atMillis to afterStart.type)
     }
 
     @Test

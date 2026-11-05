@@ -10,33 +10,30 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.example.myiulms.MainActivity
 import com.example.myiulms.R
-import com.example.myiulms.WeeklyScheduleEntry
 import com.example.myiulms.ui.dashboard.formatRoomLabel
 import com.example.myiulms.ui.widget.EXTRA_OPEN_TAB
 import com.example.myiulms.ui.widget.SCHEDULE_TAB
 
 /**
  * The "Class Reminders" channel and the class notification. A class keeps ONE
- * notification for its whole lifecycle (same id): the reminder is replaced by
- * "started", which is replaced by "ended · Next: …", so the shade never piles up.
+ * notification (same id): the reminder is replaced by "started", which clears
+ * itself when the class ends. Nothing is posted at the end of a class.
  */
 object ClassReminderNotifier {
     private const val CHANNEL_ID = "class_reminders"
     private const val MINUTE_MILLIS = 60_000L
-    /** How long the end-of-class note stays before clearing itself. */
-    private const val END_NOTE_LIFETIME_MILLIS = 30 * MINUTE_MILLIS
 
     fun ensureChannel(context: Context) {
         // HIGH = heads-up pop-up. Android fixes a channel's importance when it is
         // first created; raising it later needs a new channel id.
         val channel = NotificationChannel(CHANNEL_ID, "Class Reminders", NotificationManager.IMPORTANCE_HIGH).apply {
-            description = "Before, at the start and at the end of each class"
+            description = "Before each class and when it starts"
         }
         context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
     @SuppressLint("MissingPermission") // Guarded by ClassAlertPermissions.canNotify.
-    fun show(context: Context, event: ScheduleEvent, entries: List<WeeklyScheduleEntry>, nowMillis: Long) {
+    fun show(context: Context, event: ScheduleEvent, nowMillis: Long) {
         val occurrence = event.occurrence ?: return
         if (!ClassAlertPermissions.canNotify(context)) return
         ensureChannel(context)
@@ -62,12 +59,9 @@ object ClassReminderNotifier {
                 listOfNotNull("Until $end", room).joinToString(" · "),
                 occurrence.endMillis - nowMillis
             )
-            ScheduleEventType.ClassEnd -> Triple(
-                "$course · ended",
-                nextClassMessage(entries, occurrence),
-                END_NOTE_LIFETIME_MILLIS
-            )
-            ScheduleEventType.DayChange -> return
+            // Never notify when a class ends or the day changes; the "started"
+            // note above clears itself at the end via setTimeoutAfter.
+            ScheduleEventType.ClassEnd, ScheduleEventType.DayChange -> return
         }
 
         val openSchedule = PendingIntent.getActivity(
@@ -90,6 +84,9 @@ object ClassReminderNotifier {
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            // The channel is IMPORTANCE_HIGH (heads-up). PRIORITY_HIGH mirrors it
+            // for code paths that read the per-notification priority.
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setPublicVersion(publicVersion)
             .setContentIntent(openSchedule)

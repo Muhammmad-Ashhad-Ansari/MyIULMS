@@ -18,7 +18,8 @@ import kotlinx.coroutines.launch
  * Handles the schedule alarm and the system events that wipe or invalidate it
  * (reboot, clock or time-zone change, app update, exact-alarm access granted).
  * Every case does the same three things: refresh the widget, post the class
- * notifications that are due (reminder, started, ended), and arm the next alarm.
+ * notifications that are due (reminder, started; never class end), and arm the
+ * next alarm.
  */
 class WidgetUpdateReceiver : BroadcastReceiver() {
 
@@ -44,15 +45,15 @@ class WidgetUpdateReceiver : BroadcastReceiver() {
     }
 
     // Which stage fired is worked out from the schedule, not the intent: one
-    // firing can cover several (a class ending as the next one's reminder is
-    // due), and a delayed alarm still lands on the right stage.
+    // firing can cover several (one class starting as the next one's reminder
+    // is due), and a delayed alarm still lands on the right stage.
     private suspend fun postDueNotifications(context: Context) {
         if (!ReminderSettings.isEnabled(context)) return
         if (!NextClassWidgetSession.signedIn(context).value) return
         val entries = context.appContainer.portal.cachedWeeklySchedule()?.payload?.entries ?: return
         val now = System.currentTimeMillis()
         dueNotifications(entries, now, ReminderSettings.handledUntil(context))
-            .forEach { ClassReminderNotifier.show(context, it, entries, now) }
+            .forEach { ClassReminderNotifier.show(context, it, now) }
         ReminderSettings.setHandledUntil(context, now)
     }
 

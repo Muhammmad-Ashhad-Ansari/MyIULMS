@@ -15,18 +15,21 @@ import java.util.Locale
  * cached weekly schedule, and the text the class notifications show. No
  * Android types, so it is JVM-tested.
  *
- * Each class has a three-stage notification lifecycle when reminders are on:
- * [ScheduleEventType.Reminder] → [ScheduleEventType.ClassStart] →
- * [ScheduleEventType.ClassEnd]. The widget refreshes at all of them, plus
- * campus midnight.
+ * With reminders on, each class has two notifying stages:
+ * [ScheduleEventType.Reminder] → [ScheduleEventType.ClassStart]. A class end
+ * never notifies; [ScheduleEventType.ClassEnd] and campus midnight exist only
+ * to refresh the home-screen widget.
  */
 
 /** Minutes before a class that its reminder fires. */
 const val REMINDER_LEAD_MINUTES = 10L
 private const val MINUTE_MILLIS = 60_000L
 
+/** The only stages that ever post a notification. */
+private val NotifyingStages = setOf(ScheduleEventType.Reminder, ScheduleEventType.ClassStart)
+
 /**
- * How late a start or end notification may still be posted. A phone that was
+ * How late a start notification may still be posted. A phone that was
  * off through a class should not announce it hours later.
  */
 private const val STAGE_GRACE_MILLIS = 10 * MINUTE_MILLIS
@@ -36,7 +39,7 @@ enum class ScheduleEventType {
     Reminder,
     /** Exact class start: widget flips to NOW. */
     ClassStart,
-    /** Exact class end: widget moves on; notification names the next class. */
+    /** Exact class end: widget-only refresh. Never posts a notification. */
     ClassEnd,
     /** Campus midnight: the widget's "today" changes. Never notifies. */
     DayChange
@@ -79,9 +82,10 @@ fun classOccurrences(
 }
 
 /**
- * Every wake-up moment in the window, sorted. With [reminders] on, each class
- * contributes all three stages; with only [widgetEvents], just its start and
- * end (the widget needs no reminder moment). Midnight is a widget-only event.
+ * Every wake-up moment in the window, sorted. Reminders contribute each class's
+ * reminder and start; the widget contributes start, end and midnight. A class
+ * end is scheduled only when a widget needs it, so with no widget the alarm
+ * goes straight from a class's start to the next class's reminder.
  */
 fun scheduleEvents(
     entries: List<WeeklyScheduleEntry>,
@@ -96,7 +100,9 @@ fun scheduleEvents(
             add(ScheduleEvent(occurrence.startMillis - REMINDER_LEAD_MINUTES * MINUTE_MILLIS, ScheduleEventType.Reminder, occurrence))
         }
         add(ScheduleEvent(occurrence.startMillis, ScheduleEventType.ClassStart, occurrence))
-        add(ScheduleEvent(occurrence.endMillis, ScheduleEventType.ClassEnd, occurrence))
+        if (widgetEvents) {
+            add(ScheduleEvent(occurrence.endMillis, ScheduleEventType.ClassEnd, occurrence))
+        }
     }
     if (widgetEvents) {
         val nextMidnight = Instant.ofEpochMilli(nowMillis).atZone(zone).toLocalDate()
@@ -116,12 +122,11 @@ fun nextScheduleEvent(
     scheduleEvents(entries, nowMillis, widgetEvents, reminders, zone).firstOrNull { it.atMillis > nowMillis }
 
 /**
- * Class notifications to post now: stages that happened after
+ * Class notifications to post now: reminder and start stages that happened after
  * [handledUntilMillis] (the last time the receiver ran) and up to [nowMillis].
- * Several can be due at once (one class ending as the next one's reminder
- * fires). A reminder is only posted before its class starts; a start or end
- * only within [STAGE_GRACE_MILLIS], so a late or delayed alarm never announces
- * something long past.
+ * A class end is never included. A reminder is only posted before its class
+ * starts, a start only within [STAGE_GRACE_MILLIS], so a late or delayed alarm
+ * never announces something long past.
  */
 fun dueNotifications(
     entries: List<WeeklyScheduleEntry>,
@@ -131,7 +136,8 @@ fun dueNotifications(
 ): List<ScheduleEvent> =
     scheduleEvents(entries, nowMillis, widgetEvents = false, reminders = true, zone = zone).filter { event ->
         val occurrence = event.occurrence ?: return@filter false
-        event.atMillis in (handledUntilMillis + 1)..nowMillis && when (event.type) {
+        event.type in NotifyingStages &&
+            event.atMillis in (handledUntilMillis + 1)..nowMillis && when (event.type) {
             ScheduleEventType.Reminder -> nowMillis < occurrence.startMillis
             else -> nowMillis - event.atMillis <= STAGE_GRACE_MILLIS
         }

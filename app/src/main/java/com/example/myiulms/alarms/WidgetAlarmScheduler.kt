@@ -12,7 +12,7 @@ import com.example.myiulms.ui.widget.NextClassWidgetSession
 
 /**
  * Keeps exactly one alarm armed and hops it event to event: reminder → class
- * start → class end → next class (see [nextScheduleEvent]). Each firing re-arms
+ * start → (class end, widget only) → next class (see [nextScheduleEvent]). Each firing re-arms
  * the following one in [WidgetUpdateReceiver]; anything that changes the inputs
  * calls [reschedule].
  */
@@ -47,9 +47,10 @@ object WidgetAlarmScheduler {
             return
         }
 
-        // With reminders on, every stage posts a notification, so every hop wakes
-        // the phone; this also keeps the chain moving while it sleeps. Widget-only
-        // (reminders off) can wait until the screen is next on, when anyone sees it.
+        // With reminders on, every hop wakes the phone, including the silent
+        // class-end refresh when a widget exists: a sleeping phone must never
+        // hold back the chain past the next reminder. Widget-only (reminders off)
+        // can wait until the screen is next on, when anyone sees it.
         val wakeUp = reminders
         val type = if (wakeUp) AlarmManager.RTC_WAKEUP else AlarmManager.RTC
         if (ClassAlertPermissions.canScheduleExact(app)) {
