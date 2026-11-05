@@ -72,6 +72,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.contentType
 import androidx.compose.ui.semantics.liveRegion
@@ -111,6 +112,7 @@ import com.example.myiulms.domain.attendance.attendanceRiskLabel
 import com.example.myiulms.domain.attendance.assessAttendance
 import com.example.myiulms.domain.attendance.AttendanceRisk
 import com.example.myiulms.domain.attendance.AttendanceLevel
+import com.example.myiulms.domain.attendance.edpCodeOf
 import com.example.myiulms.ui.dashboard.CampusZone
 import com.example.myiulms.ui.dashboard.ScheduleFocus
 import com.example.myiulms.ui.dashboard.ScheduleFocusCard
@@ -2588,9 +2590,8 @@ private fun AttendanceScreen(
         return
     }
 
-    val totalSessions = attendance.courses.sumOf { it.totalSessions }
-    val totalPresent = attendance.courses.sumOf { it.present }
-    val percent = if (totalSessions > 0) (totalPresent * 100f / totalSessions).toInt() else 0
+    var showLimitsInfo by rememberSaveable { mutableStateOf(false) }
+    if (showLimitsInfo) AbsenceLimitsInfoDialog(onDismiss = { showLimitsInfo = false })
 
     // Data-present branch only: `loading` here always means a refresh, never the first load.
     PullToRefreshBox(
@@ -2611,16 +2612,16 @@ private fun AttendanceScreen(
             item {
                 ScreenHeading(
                     title = "Attendance",
-                    subtitle = "Course-wise sessions and class records"
-                )
-            }
-            item {
-                HeroMetricCard(
-                    label = "Overall attendance",
-                    value = if (totalSessions > 0) "$percent%" else "—",
-                    helper = if (totalSessions > 0) "$totalPresent of $totalSessions sessions attended"
-                    else "No attendance sessions recorded yet",
-                    icon = Icons.AutoMirrored.Rounded.FactCheck
+                    subtitle = "Course-wise sessions and class records",
+                    action = {
+                        IconButton(onClick = { showLimitsInfo = true }) {
+                            Icon(
+                                Icons.Rounded.Info,
+                                contentDescription = "How absence limits are estimated",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 )
             }
             if (attendance.courses.isEmpty()) {
@@ -2632,15 +2633,6 @@ private fun AttendanceScreen(
                     )
                 }
             } else {
-                item {
-                    // The limits are derived, not published by the portal: say so once.
-                    Text(
-                        text = "Absence limits are estimates: ${AcademicPolicy.ATTENDANCE_MIN_PERCENT}% of each " +
-                            "course's weekly classes over a $SEMESTER_WEEKS-week semester. Confirm with your department.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
                 items(attendance.courses) { course ->
                     AttendanceCourseCard(course, remember(course, timetable) { assessAttendance(course, timetable) })
                 }
@@ -2674,12 +2666,24 @@ private fun AttendanceCourseCard(course: AttendanceCourse, risk: AttendanceRisk)
                     },
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = course.name,
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
+                val edp = edpCodeOf(course.name)
+                Column(Modifier.weight(1f)) {
+                    // The EDP code gets its own quieter line, so long names wrap less.
+                    Text(
+                        text = edp?.let { course.name.removeSuffix("($it)").trim() } ?: course.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (edp != null) {
+                        Text(
+                            text = edp,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
                 Icon(
                     imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
                     contentDescription = null,
@@ -2687,26 +2691,7 @@ private fun AttendanceCourseCard(course: AttendanceCourse, risk: AttendanceRisk)
                 )
             }
             AttendanceRiskChip(risk)
-            Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.Sm)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(AppSpacing.Sm)
-                ) {
-                    AttendanceMetric("Present", course.present.toString(), Modifier.weight(1f))
-                    AttendanceMetric("Absent", course.absent.toString(), Modifier.weight(1f))
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(AppSpacing.Sm)
-                ) {
-                    AttendanceMetric("Sessions", course.totalSessions.toString(), Modifier.weight(1f))
-                    AttendanceMetric(
-                        "Attend. %",
-                        if (course.totalSessions > 0) "${course.attendancePercent}%" else "—",
-                        Modifier.weight(1f)
-                    )
-                }
-            }
+            AttendanceStatsRow(course, risk)
             if (expanded) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
                 if (course.faculty.isNotBlank()) InfoLine(Icons.Rounded.Person, "Faculty", course.faculty)
@@ -2752,15 +2737,17 @@ private fun AttendanceCourseCard(course: AttendanceCourse, risk: AttendanceRisk)
 @Composable
 private fun AttendanceRiskChip(risk: AttendanceRisk) {
     val label = attendanceRiskLabel(risk) ?: return
+    val fg = attendanceRiskColor(risk.level) ?: return
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val (fg, icon, levelName) = when (risk.level) {
-        AttendanceLevel.Safe -> Triple(if (dark) GradeStrongDark else GradeStrongLight, Icons.Rounded.CheckCircle, "Safe")
-        AttendanceLevel.Caution -> Triple(if (dark) WarningForegroundDark else WarningForegroundLight, Icons.Rounded.Warning, "Caution")
-        else -> Triple(if (dark) GradeCriticalDark else GradeCriticalLight, Icons.Rounded.Error, "At risk")
+    val (icon, levelName) = when (risk.level) {
+        AttendanceLevel.Safe -> Icons.Rounded.CheckCircle to "Safe"
+        AttendanceLevel.Caution -> Icons.Rounded.Warning to "Caution"
+        else -> Icons.Rounded.Error to "At risk"
     }
     val allowed = risk.allowedAbsences ?: 0
     val used = (allowed - (risk.absencesLeft ?: 0)).coerceIn(0, allowed.coerceAtLeast(1))
-    Column(
+    // One-line pill: icon shape + verdict carry the level; the count stays quieter.
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(AppRadius.Small))
@@ -2769,40 +2756,91 @@ private fun AttendanceRiskChip(risk: AttendanceRisk) {
             .semantics(mergeDescendants = true) {
                 contentDescription = "Attendance $levelName. $label. $used of $allowed allowed absences used."
             },
-        verticalArrangement = Arrangement.spacedBy(AppSpacing.Xs)
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(AppSpacing.Sm))
-            Text(label, color = fg, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f))
-            Text("$used / $allowed used", color = fg, style = MaterialTheme.typography.labelMedium)
-        }
-        LinearProgressIndicator(
-            progress = { if (allowed > 0) used.toFloat() / allowed else 1f },
-            modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
-            color = fg,
-            trackColor = fg.copy(alpha = 0.22f),
-            drawStopIndicator = {}
-        )
+        Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(AppSpacing.Sm))
+        Text(label, color = fg, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.weight(1f))
+        Spacer(Modifier.width(AppSpacing.Sm))
+        Text("$used of $allowed used", color = fg.copy(alpha = 0.75f), style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+/** Safe / Caution / Danger foreground for the current theme; null when unknown. */
+@Composable
+private fun attendanceRiskColor(level: AttendanceLevel): Color? {
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    return when (level) {
+        AttendanceLevel.Safe -> if (dark) GradeStrongDark else GradeStrongLight
+        AttendanceLevel.Caution -> if (dark) WarningForegroundDark else WarningForegroundLight
+        AttendanceLevel.Danger -> if (dark) GradeCriticalDark else GradeCriticalLight
+        AttendanceLevel.Unknown -> null
+    }
+}
+
+/**
+ * Present · Absent · Held · % so far as one row of value-over-label pairs. No
+ * boxes, so the risk chip stays the card's only filled shape. Wraps to two
+ * rows at large font sizes; screen readers hear it as one sentence.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AttendanceStatsRow(course: AttendanceCourse, risk: AttendanceRisk) {
+    val absentTint = when (risk.level) {
+        AttendanceLevel.Caution, AttendanceLevel.Danger -> attendanceRiskColor(risk.level)
+        else -> null
+    } ?: MaterialTheme.colorScheme.onSurface
+    val percent = if (course.totalSessions > 0) "${course.attendancePercent}%" else "—"
+    FlowRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clearAndSetSemantics {
+                contentDescription = "${course.present} present, ${course.absent} absent, " +
+                    "${course.totalSessions} held, $percent so far"
+            },
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalArrangement = Arrangement.spacedBy(AppSpacing.Sm),
+        maxItemsInEachRow = 4
+    ) {
+        val cell = Modifier.weight(1f).widthIn(min = 72.dp)
+        AttendanceStat(course.present.toString(), "Present", cell)
+        AttendanceStat(course.absent.toString(), "Absent", cell, valueColor = absentTint)
+        AttendanceStat(course.totalSessions.toString(), "Held", cell)
+        AttendanceStat(percent, "so far", cell)
     }
 }
 
 @Composable
-private fun AttendanceMetric(label: String, value: String, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(AppRadius.Small),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp)
-        ) {
-            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        }
+private fun AttendanceStat(
+    value: String,
+    label: String,
+    modifier: Modifier = Modifier,
+    valueColor: Color = MaterialTheme.colorScheme.onSurface
+) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = valueColor)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
+}
+
+/** Opened from the info icon by the Attendance heading: how the limits are derived. */
+@Composable
+private fun AbsenceLimitsInfoDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
+        title = { Text("About absence limits") },
+        text = {
+            Text(
+                "Absence limits are estimates. Each course needs ${AcademicPolicy.ATTENDANCE_MIN_PERCENT}% " +
+                    "attendance, so you can miss up to ${100 - AcademicPolicy.ATTENDANCE_MIN_PERCENT}% of its " +
+                    "planned sessions: its weekly classes over a $SEMESTER_WEEKS-week semester. The portal does " +
+                    "not publish these limits, so confirm with your department before relying on them."
+            )
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Got it") } }
+    )
 }
 
 @Composable
