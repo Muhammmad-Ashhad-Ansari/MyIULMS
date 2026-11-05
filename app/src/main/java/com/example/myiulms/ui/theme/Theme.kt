@@ -2,6 +2,9 @@ package com.example.myiulms.ui.theme
 
 import android.content.Context
 import android.content.res.Configuration
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -98,6 +101,17 @@ fun resolveSavedDarkTheme(context: Context): Boolean {
         Configuration.UI_MODE_NIGHT_YES
     val prefs = context.getSharedPreferences("iulms_ui", Context.MODE_PRIVATE)
     return if (prefs.contains("dark_theme")) prefs.getBoolean("dark_theme", systemDark) else systemDark
+}
+
+/**
+ * Edge-to-edge with status and navigation bar icons matched to the app's own
+ * theme choice, not the phone's dark mode: dark icons in light mode, light
+ * icons in dark mode. Call again whenever the in-app theme changes.
+ */
+fun ComponentActivity.applySystemBars(dark: Boolean) {
+    val transparent = android.graphics.Color.TRANSPARENT
+    val style = if (dark) SystemBarStyle.dark(transparent) else SystemBarStyle.light(transparent, transparent)
+    enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
 }
 
 @Composable

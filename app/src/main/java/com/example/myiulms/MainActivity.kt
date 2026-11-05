@@ -16,7 +16,6 @@ import android.view.View
 import android.view.animation.AccelerateInterpolator
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.edit
 import androidx.compose.foundation.Image
@@ -170,7 +169,8 @@ class MainActivity : ComponentActivity() {
             setOnExitAnimationListener(::animateSplashExit)
         }
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // Bars follow the in-app theme: set before the first frame, then on every toggle.
+        applySystemBars(resolveSavedDarkTheme(this))
         // Cold start. Skipped on recreation (rotation, process restore), where
         // the launch intent still carries the extra but the student may since
         // have moved to another tab.
@@ -182,6 +182,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             var darkTheme by remember { mutableStateOf(resolveSavedDarkTheme(this)) }
+            LaunchedEffect(darkTheme) { applySystemBars(darkTheme) }
 
             MyIULMSTheme(darkTheme = darkTheme) {
                 Surface(

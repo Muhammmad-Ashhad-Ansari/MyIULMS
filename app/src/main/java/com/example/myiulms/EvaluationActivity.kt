@@ -2,13 +2,10 @@ package com.example.myiulms
 
 import android.app.Activity
 import android.graphics.Bitmap
-import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -110,6 +107,7 @@ import com.example.myiulms.ui.theme.WarningContainerDark
 import com.example.myiulms.ui.theme.WarningContainerLight
 import com.example.myiulms.ui.theme.WarningForegroundDark
 import com.example.myiulms.ui.theme.WarningForegroundLight
+import com.example.myiulms.ui.theme.applySystemBars
 import com.example.myiulms.ui.theme.resolveSavedDarkTheme
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -129,12 +127,7 @@ class EvaluationActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // App ka in-app theme choice (system nahi) — bar icons bhi usi se match.
         val darkTheme = resolveSavedDarkTheme(this)
-        val barStyle = if (darkTheme) {
-            SystemBarStyle.dark(AndroidColor.TRANSPARENT)
-        } else {
-            SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT)
-        }
-        enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
+        applySystemBars(darkTheme)
 
         setContent {
             MyIULMSTheme(darkTheme = darkTheme) {
