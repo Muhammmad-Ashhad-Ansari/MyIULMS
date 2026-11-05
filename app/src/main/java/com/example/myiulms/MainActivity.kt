@@ -29,6 +29,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.selectable
@@ -1523,10 +1524,10 @@ private fun ResultScreen(
 
             if (average != null) {
                 item {
-                    InsightRow(
-                        Triple("Average", formatOneDecimal(average), Icons.Rounded.QueryStats),
-                        Triple("Highest", formatOneDecimal(highest ?: average), Icons.Rounded.EmojiEvents),
-                        Triple("A grades", aGrades.toString(), Icons.Rounded.Grade)
+                    MetricStrip(
+                        "Average" to formatOneDecimal(average),
+                        "Highest" to formatOneDecimal(highest ?: average),
+                        "A grades" to aGrades.toString()
                     )
                 }
             }
@@ -1558,7 +1559,10 @@ private fun ResultCourseCard(row: ExamRow) {
                 Text(
                     row.course,
                     modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleMedium
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.width(10.dp))
                 GradeBadge(row.grade)
@@ -1566,7 +1570,7 @@ private fun ResultCourseCard(row: ExamRow) {
 
             Spacer(Modifier.height(15.dp))
 
-            ResultMetricGrid(row)
+            ResultMarksRow(row)
 
             HorizontalDivider(
                 Modifier.padding(vertical = 13.dp),
@@ -2762,26 +2766,33 @@ private fun AttendanceStatsRow(course: AttendanceCourse, risk: AttendanceRisk) {
                 contentDescription = "${course.present} present, ${course.absent} absent, " +
                     "${course.totalSessions} held, $percent so far"
             },
-        horizontalArrangement = Arrangement.SpaceEvenly,
+        horizontalArrangement = Arrangement.spacedBy(AppSpacing.Sm),
         verticalArrangement = Arrangement.spacedBy(AppSpacing.Sm),
         maxItemsInEachRow = 4
     ) {
         val cell = Modifier.weight(1f).widthIn(min = 72.dp)
-        AttendanceStat(course.present.toString(), "Present", cell)
-        AttendanceStat(course.absent.toString(), "Absent", cell, valueColor = absentTint)
-        AttendanceStat(course.totalSessions.toString(), "Held", cell)
-        AttendanceStat(percent, "so far", cell)
+        CompactStat(course.present.toString(), "Present", cell)
+        CompactStat(course.absent.toString(), "Absent", cell, valueColor = absentTint)
+        CompactStat(course.totalSessions.toString(), "Held", cell)
+        CompactStat(percent, "so far", cell)
     }
 }
 
 @Composable
-private fun AttendanceStat(
+private fun CompactStat(
     value: String,
     label: String,
     modifier: Modifier = Modifier,
     valueColor: Color = MaterialTheme.colorScheme.onSurface
 ) {
-    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+    // Soft tinted micro-card: each number gets its own boundary, read at a glance.
+    Column(
+        modifier
+            .clip(RoundedCornerShape(AppRadius.Small))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
+            .padding(horizontal = AppSpacing.Sm, vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
         Text(value, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = valueColor)
         Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
@@ -3167,10 +3178,10 @@ private fun TranscriptScreen(
             }
 
             item {
-                InsightRow(
-                    Triple("Credits", completed.toString(), Icons.AutoMirrored.Rounded.MenuBook),
-                    Triple("Entries", transcript.courses.size.toString(), Icons.AutoMirrored.Rounded.LibraryBooks),
-                    Triple("A grades", aGrades.toString(), Icons.Rounded.Grade)
+                MetricStrip(
+                    "Credits" to completed.toString(),
+                    "Entries" to transcript.courses.size.toString(),
+                    "A grades" to aGrades.toString()
                 )
             }
 
@@ -3412,64 +3423,45 @@ private fun HeroMetricCard(
     }
 }
 
+/**
+ * Two or three headline numbers in one card, split by thin dividers: one
+ * shape for one group of related values. Never stacks; at large font sizes a
+ * label wraps inside its own segment instead.
+ */
 @Composable
-private fun InsightRow(vararg values: Triple<String, String, ImageVector>) {
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
-        if (maxWidth < 380.dp) {
-            Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.Sm)) {
-                values.forEach { item ->
-                    InsightTile(
-                        item = item,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            }
-        } else {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(AppSpacing.Sm)
-            ) {
-                values.forEach { item ->
-                    InsightTile(
-                        item = item,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun InsightTile(
-    item: Triple<String, String, ImageVector>,
-    modifier: Modifier = Modifier
-) {
-    val (label, value, icon) = item
-
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(AppRadius.Medium),
-        color = MaterialTheme.colorScheme.surface
+private fun MetricStrip(vararg metrics: Pair<String, String>) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(AppRadius.Large),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
     ) {
         Row(
-            modifier = Modifier.padding(AppSpacing.Md),
+            modifier = Modifier.padding(vertical = AppSpacing.Lg),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                icon,
-                contentDescription = null,
-                modifier = Modifier.size(20.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
-            Spacer(Modifier.width(AppSpacing.Md))
-            Column {
-                Text(value, style = MaterialTheme.typography.titleMedium)
-                Text(
-                    label,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            metrics.forEachIndexed { index, (label, value) ->
+                if (index > 0) {
+                    VerticalDivider(
+                        modifier = Modifier.height(24.dp),
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+                    )
+                }
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = AppSpacing.Sm)
+                        .clearAndSetSemantics { contentDescription = "$label: $value" },
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
         }
     }
@@ -3620,59 +3612,24 @@ private fun ScreenHeading(
     }
 }
 
+/** Mid · Quiz · Project · Final in one row; wraps at large font sizes. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ResultMetricGrid(row: ExamRow) {
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
-        if (maxWidth < 380.dp) {
-            Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.Sm)) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(AppSpacing.Sm)
-                ) {
-                    MetricTile("Mid", row.midterm, Modifier.weight(1f))
-                    MetricTile("Quiz", row.quizzes, Modifier.weight(1f))
-                }
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(AppSpacing.Sm)
-                ) {
-                    MetricTile("Project", row.project, Modifier.weight(1f))
-                    MetricTile("Final", row.finalExam, Modifier.weight(1f))
-                }
-            }
-        } else {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(AppSpacing.Sm)
-            ) {
-                MetricTile("Mid", row.midterm, Modifier.weight(1f))
-                MetricTile("Quiz", row.quizzes, Modifier.weight(1f))
-                MetricTile("Project", row.project, Modifier.weight(1f))
-                MetricTile("Final", row.finalExam, Modifier.weight(1f))
-            }
-        }
-    }
-}
-
-@Composable
-private fun MetricTile(label: String, value: String, modifier: Modifier = Modifier) {
-    Surface(
-        modifier,
-        shape = RoundedCornerShape(AppRadius.Medium),
-        color = MaterialTheme.colorScheme.surfaceVariant
+private fun ResultMarksRow(row: ExamRow) {
+    val marks = listOf("Mid" to row.midterm, "Quiz" to row.quizzes, "Project" to row.project, "Final" to row.finalExam)
+        .map { (label, value) -> label to value.ifBlank { "—" } }
+    FlowRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clearAndSetSemantics {
+                contentDescription = marks.joinToString(", ") { (label, value) -> "$label $value" }
+            },
+        horizontalArrangement = Arrangement.spacedBy(AppSpacing.Sm),
+        verticalArrangement = Arrangement.spacedBy(AppSpacing.Sm),
+        maxItemsInEachRow = 4
     ) {
-        Column(
-            Modifier.padding(vertical = 9.dp, horizontal = 6.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(value.ifBlank { "—" }, style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(2.dp))
-            Text(
-                label,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+        val cell = Modifier.weight(1f).widthIn(min = 64.dp)
+        marks.forEach { (label, value) -> CompactStat(value, label, cell) }
     }
 }
 
