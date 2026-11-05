@@ -3105,17 +3105,13 @@ private fun TranscriptScreen(
     val completed = remember(transcript) { completedHours(transcript.courses) }
     val remaining = remember(transcript) { remainingHours(transcript.courses) }
     val aGrades = transcript.courses.count { it.grade.trim().uppercase().startsWith("A") }
-    var weakOnly by rememberSaveable(transcript) { mutableStateOf(false) }
+    val filterOptions = remember(transcript) { transcriptFilterOptions(transcript.courses) }
+    var gradeFilter by rememberSaveable(transcript) { mutableStateOf(TRANSCRIPT_FILTER_ALL) }
+    val activeFilter = gradeFilter.takeIf { it in filterOptions } ?: TRANSCRIPT_FILTER_ALL
 
     // IMPORTANT: Display the raw transcript rows exactly as returned by IULMS.
     // Do not deduplicate here; theory/lab rows can share similar course codes.
-    val visibleCourses = remember(transcript, weakOnly) {
-        if (weakOnly) {
-            transcript.courses.filter { isWeakCourse(it.grade) }
-        } else {
-            transcript.courses
-        }
-    }
+    val visibleCourses = remember(transcript, activeFilter) { filterTranscript(transcript.courses, activeFilter) }
 
     // Data-present branch only: `loading` here always means a refresh, never the first load.
     PullToRefreshBox(
@@ -3186,19 +3182,21 @@ private fun TranscriptScreen(
                     Column(Modifier.weight(1f)) {
                         Text("Courses & labs", style = MaterialTheme.typography.titleLarge)
                         Text(
-                            if (weakOnly) "${visibleCourses.size} weak/critical entries"
-                            else "All transcript entries returned by IULMS",
+                            when (activeFilter) {
+                                TRANSCRIPT_FILTER_ALL -> "All transcript entries returned by IULMS"
+                                TRANSCRIPT_FILTER_WEAK -> "${visibleCourses.size} weak entries (C+ or lower)"
+                                else -> "${visibleCourses.size} entries graded $activeFilter"
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    FilterChip(
-                        selected = weakOnly,
-                        onClick = { weakOnly = !weakOnly },
-                        label = { Text("Weak only") },
-                        leadingIcon = if (weakOnly) {
-                            { Icon(Icons.Rounded.FilterAlt, null, Modifier.size(18.dp)) }
-                        } else null
+                    Spacer(Modifier.width(AppSpacing.Sm))
+                    TranscriptGradeFilter(
+                        options = filterOptions,
+                        selected = activeFilter,
+                        countOf = { filterTranscript(transcript.courses, it).size },
+                        onSelect = { gradeFilter = it }
                     )
                 }
             }
@@ -3207,9 +3205,16 @@ private fun TranscriptScreen(
                 item {
                     EmptyState(
                         Icons.Rounded.CheckCircle,
-                        if (weakOnly) "No weak courses" else "No transcript entries",
-                        if (weakOnly) "No C-grade or lower entries were found."
-                        else "Transcript entries will appear here when returned by IULMS."
+                        when (activeFilter) {
+                            TRANSCRIPT_FILTER_ALL -> "No transcript entries"
+                            TRANSCRIPT_FILTER_WEAK -> "No weak courses"
+                            else -> "No $activeFilter entries"
+                        },
+                        when (activeFilter) {
+                            TRANSCRIPT_FILTER_ALL -> "Transcript entries will appear here when returned by IULMS."
+                            TRANSCRIPT_FILTER_WEAK -> "No C-grade or lower entries were found."
+                            else -> "No entries with this grade were found."
+                        }
                     )
                 }
             } else {
@@ -3464,6 +3469,55 @@ private fun InsightTile(
                     label,
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+/**
+ * One compact button that opens a menu of grade filters with counts: All,
+ * each grade present (best first), then Weak. The button shows the current
+ * choice and is highlighted while anything other than All is applied.
+ */
+@Composable
+private fun TranscriptGradeFilter(
+    options: List<String>,
+    selected: String,
+    countOf: (String) -> Int,
+    onSelect: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val filtered = selected != TRANSCRIPT_FILTER_ALL
+    Box {
+        FilterChip(
+            selected = filtered,
+            onClick = { expanded = true },
+            label = { Text(if (filtered) selected else "Filter") },
+            leadingIcon = { Icon(Icons.Rounded.FilterAlt, contentDescription = null, modifier = Modifier.size(18.dp)) },
+            trailingIcon = { Icon(Icons.Rounded.ArrowDropDown, contentDescription = null, modifier = Modifier.size(18.dp)) },
+            modifier = Modifier.semantics {
+                contentDescription = "Filter by grade, showing ${if (filtered) selected else "all"}"
+                role = Role.DropdownList
+            }
+        )
+        MyIulmsDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { option ->
+                if (option == TRANSCRIPT_FILTER_WEAK) MyIulmsDropdownMenuDivider()
+                MyIulmsDropdownMenuItem(
+                    text = if (option == TRANSCRIPT_FILTER_WEAK) "Weak (C+ or lower)" else option,
+                    checked = option == selected,
+                    trailing = {
+                        Text(
+                            countOf(option).toString(),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    },
+                    onClick = {
+                        onSelect(option)
+                        expanded = false
+                    }
                 )
             }
         }
