@@ -32,7 +32,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -113,6 +112,10 @@ import com.example.myiulms.domain.attendance.assessAttendance
 import com.example.myiulms.domain.attendance.AttendanceRisk
 import com.example.myiulms.domain.attendance.AttendanceLevel
 import com.example.myiulms.domain.attendance.edpCodeOf
+import com.example.myiulms.ui.components.MyIulmsDropdownMenu
+import com.example.myiulms.ui.components.MyIulmsDropdownMenuDivider
+import com.example.myiulms.ui.components.MyIulmsDropdownMenuHeader
+import com.example.myiulms.ui.components.MyIulmsDropdownMenuItem
 import com.example.myiulms.ui.dashboard.CampusZone
 import com.example.myiulms.ui.dashboard.ScheduleFocus
 import com.example.myiulms.ui.dashboard.ScheduleFocusCard
@@ -1176,11 +1179,9 @@ private fun PortalTopBar(
     onLogout: () -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
-    // Outside the menu so the dialog survives the menu closing.
+    // A second menu at the same anchor, opened from the overflow menu's
+    // "Remind me" row once that menu has closed.
     var showReminderTime by remember { mutableStateOf(false) }
-    if (showReminderTime) {
-        ReminderTimeDialog(onDismiss = { showReminderTime = false })
-    }
 
     TopAppBar(
         title = {
@@ -1241,13 +1242,14 @@ private fun PortalTopBar(
                 IconButton(onClick = { menuExpanded = true }) {
                     Icon(Icons.Rounded.MoreVert, contentDescription = "More options")
                 }
-                DropdownMenu(
+                ReminderTimeMenu(expanded = showReminderTime, onDismiss = { showReminderTime = false })
+                MyIulmsDropdownMenu(
                     expanded = menuExpanded,
                     onDismissRequest = { menuExpanded = false }
                 ) {
-                    DropdownMenuItem(
-                        text = { Text("Check for updates") },
-                        leadingIcon = { Icon(Icons.Rounded.Update, contentDescription = null) },
+                    MyIulmsDropdownMenuItem(
+                        text = "Check for updates",
+                        leadingIcon = Icons.Rounded.Update,
                         onClick = {
                             menuExpanded = false
                             onCheckForUpdates()
@@ -1265,22 +1267,12 @@ private fun PortalTopBar(
                     // rather than between them — harder to hit by accident and it
                     // reads as the menu's terminal action.
                     //
-                    // Both `textColor` AND `leadingIconColor` are overridden.
-                    // Setting only the text leaves the exit glyph on the default
-                    // `onSurface` tint, which reads as a styling oversight.
-                    DropdownMenuItem(
-                        text = { Text("Sign out") },
-                        leadingIcon = {
-                            Icon(Icons.AutoMirrored.Rounded.ExitToApp, contentDescription = null)
-                        },
-                        // `MenuDefaults.itemColors`, not a `DropdownMenuItemDefaults`:
-                        // in Material3 1.4.0 that object does not exist. The
-                        // factory lives on `MenuDefaults` and returns
-                        // `MenuItemColors`.
-                        colors = MenuDefaults.itemColors(
-                            textColor = MaterialTheme.colorScheme.error,
-                            leadingIconColor = MaterialTheme.colorScheme.error
-                        ),
+                    // `destructive` tints both the label and the exit glyph red.
+                    MyIulmsDropdownMenuDivider()
+                    MyIulmsDropdownMenuItem(
+                        text = "Sign out",
+                        leadingIcon = Icons.AutoMirrored.Rounded.ExitToApp,
+                        destructive = true,
                         onClick = {
                             menuExpanded = false
                             onLogout()
@@ -1305,15 +1297,10 @@ private fun PortalTopBar(
 private fun ClassRemindersMenuItem() {
     val context = LocalContext.current
     val enabled by ReminderSettings.enabled(context).collectAsState()
-    DropdownMenuItem(
-        text = { Text("Class reminders") },
-        leadingIcon = {
-            Icon(
-                if (enabled) Icons.Rounded.NotificationsActive else Icons.Rounded.NotificationsOff,
-                contentDescription = null
-            )
-        },
-        trailingIcon = {
+    MyIulmsDropdownMenuItem(
+        text = "Class reminders",
+        leadingIcon = if (enabled) Icons.Rounded.NotificationsActive else Icons.Rounded.NotificationsOff,
+        trailing = {
             // Display only: the whole row is the toggle target. Off-state colours
             // are explicit: the M3 defaults put a near-invisible thumb on this
             // theme's dark menu surface.
@@ -1343,61 +1330,37 @@ private fun ReminderTimeMenuItem(onClick: () -> Unit) {
     val context = LocalContext.current
     val enabled by ReminderSettings.enabled(context).collectAsState()
     val lead by ReminderSettings.leadMinutesFlow(context).collectAsState()
-    DropdownMenuItem(
-        text = {
-            Column {
-                Text("Remind me")
-                Text(
-                    "$lead min before class",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        },
-        leadingIcon = { Icon(Icons.Rounded.Schedule, contentDescription = null) },
+    MyIulmsDropdownMenuItem(
+        text = "Remind me",
+        supportingText = "$lead min before class",
+        leadingIcon = Icons.Rounded.Schedule,
         enabled = enabled,
         onClick = onClick
     )
 }
 
 /**
- * Lead-time picker: 5, 10 or 15 minutes. Applies at once: the alarm is
- * re-armed for the new reminder time.
+ * Lead-time choice: 5, 10 or 15 minutes, as a small menu at the overflow
+ * button. Applies at once: the alarm is re-armed for the new reminder time.
  */
 @Composable
-private fun ReminderTimeDialog(onDismiss: () -> Unit) {
+private fun ReminderTimeMenu(expanded: Boolean, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val current by ReminderSettings.leadMinutesFlow(context).collectAsState()
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Remind me before class") },
-        text = {
-            Column(Modifier.selectableGroup()) {
-                REMINDER_LEAD_OPTIONS.forEach { minutes ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 48.dp)
-                            .selectable(
-                                selected = minutes == current,
-                                role = Role.RadioButton,
-                                onClick = {
-                                    ReminderSettings.setLeadMinutes(context, minutes)
-                                    NextClassWidgetSession.rescheduleAlarms(context)
-                                    onDismiss()
-                                }
-                            ),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(selected = minutes == current, onClick = null)
-                        Spacer(Modifier.width(AppSpacing.Md))
-                        Text("$minutes minutes")
-                    }
+    MyIulmsDropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        MyIulmsDropdownMenuHeader("Remind me before class")
+        REMINDER_LEAD_OPTIONS.forEach { minutes ->
+            MyIulmsDropdownMenuItem(
+                text = "$minutes minutes",
+                checked = minutes == current,
+                onClick = {
+                    ReminderSettings.setLeadMinutes(context, minutes)
+                    NextClassWidgetSession.rescheduleAlarms(context)
+                    onDismiss()
                 }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
+            )
+        }
+    }
 }
 
 @Composable

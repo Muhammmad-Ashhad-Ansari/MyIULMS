@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -14,6 +13,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.example.myiulms.ui.components.MyIulmsDropdownMenuItem
 
 /**
  * Reusable entry points into the single hoisted policy sheet.
@@ -42,11 +42,9 @@ fun PolicyInfoButton(modifier: Modifier = Modifier) {
 @Composable
 fun PolicyOverflowItem(onDismissMenu: () -> Unit) {
     val policy = LocalAcademicPolicyState.current
-    DropdownMenuItem(
-        text = { Text("Grading & scholarship policy") },
-        leadingIcon = {
-            Icon(imageVector = Icons.Rounded.Info, contentDescription = null)
-        },
+    MyIulmsDropdownMenuItem(
+        text = "Grading & scholarship policy",
+        leadingIcon = Icons.Rounded.Info,
         onClick = {
             onDismissMenu()
             policy.open()
