@@ -100,6 +100,18 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.myiulms.ui.theme.WarningForegroundLight
+import com.example.myiulms.ui.theme.WarningForegroundDark
+import com.example.myiulms.ui.theme.GradeCriticalLight
+import com.example.myiulms.ui.theme.GradeCriticalDark
+import com.example.myiulms.ui.theme.GradeStrongLight
+import com.example.myiulms.ui.theme.GradeStrongDark
+import com.example.myiulms.ui.policy.AcademicPolicy
+import com.example.myiulms.domain.attendance.SEMESTER_WEEKS
+import com.example.myiulms.domain.attendance.attendanceRiskLabel
+import com.example.myiulms.domain.attendance.assessAttendance
+import com.example.myiulms.domain.attendance.AttendanceRisk
+import com.example.myiulms.domain.attendance.AttendanceLevel
 import com.example.myiulms.ui.dashboard.CampusZone
 import com.example.myiulms.ui.dashboard.ScheduleFocus
 import com.example.myiulms.ui.dashboard.ScheduleFocusCard
@@ -738,6 +750,7 @@ private fun HomeScreen(
                             )
                             1 -> AttendanceScreen(
                                 vm.attendance,
+                                vm.weeklySchedule?.entries,
                                 pageState,
                                 onRetry = { vm.refresh(page) },
                                 onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) }
@@ -2564,6 +2577,7 @@ private fun scheduleDurationLabel(time: String): String? {
 @Composable
 private fun AttendanceScreen(
     attendance: AttendanceSummary?,
+    timetable: List<WeeklyScheduleEntry>?,
     screenState: ScreenLoadState,
     onRetry: () -> Unit,
     onPullRefresh: () -> Unit
@@ -2617,14 +2631,25 @@ private fun AttendanceScreen(
                     )
                 }
             } else {
-                items(attendance.courses) { course -> AttendanceCourseCard(course) }
+                item {
+                    // The limits are derived, not published by the portal: say so once.
+                    Text(
+                        text = "Absence limits are estimates: ${AcademicPolicy.ATTENDANCE_MIN_PERCENT}% of each " +
+                            "course's weekly classes over a $SEMESTER_WEEKS-week semester. Confirm with your department.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                items(attendance.courses) { course ->
+                    AttendanceCourseCard(course, remember(course, timetable) { assessAttendance(course, timetable) })
+                }
             }
         }
     }
 }
 
 @Composable
-private fun AttendanceCourseCard(course: AttendanceCourse) {
+private fun AttendanceCourseCard(course: AttendanceCourse, risk: AttendanceRisk) {
     var expanded by rememberSaveable(course.name) { mutableStateOf(false) }
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -2660,6 +2685,7 @@ private fun AttendanceCourseCard(course: AttendanceCourse) {
                     tint = MaterialTheme.colorScheme.primary
                 )
             }
+            AttendanceRiskChip(risk)
             Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.Sm)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -2714,6 +2740,50 @@ private fun AttendanceCourseCard(course: AttendanceCourse) {
                 }
             }
         }
+    }
+}
+
+/**
+ * Absence status for one course: tinted pill with icon and words, so colour is
+ * never the only signal. Safe = green, Caution = amber, Danger = red. Hidden
+ * when the course's weekly classes can't be determined.
+ */
+@Composable
+private fun AttendanceRiskChip(risk: AttendanceRisk) {
+    val label = attendanceRiskLabel(risk) ?: return
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val (fg, icon, levelName) = when (risk.level) {
+        AttendanceLevel.Safe -> Triple(if (dark) GradeStrongDark else GradeStrongLight, Icons.Rounded.CheckCircle, "Safe")
+        AttendanceLevel.Caution -> Triple(if (dark) WarningForegroundDark else WarningForegroundLight, Icons.Rounded.Warning, "Caution")
+        else -> Triple(if (dark) GradeCriticalDark else GradeCriticalLight, Icons.Rounded.Error, "At risk")
+    }
+    val allowed = risk.allowedAbsences ?: 0
+    val used = (allowed - (risk.absencesLeft ?: 0)).coerceIn(0, allowed.coerceAtLeast(1))
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(AppRadius.Small))
+            .background(fg.copy(alpha = if (dark) 0.16f else 0.10f))
+            .padding(horizontal = AppSpacing.Md, vertical = AppSpacing.Sm)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "Attendance $levelName. $label. $used of $allowed allowed absences used."
+            },
+        verticalArrangement = Arrangement.spacedBy(AppSpacing.Xs)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(AppSpacing.Sm))
+            Text(label, color = fg, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f))
+            Text("$used / $allowed used", color = fg, style = MaterialTheme.typography.labelMedium)
+        }
+        LinearProgressIndicator(
+            progress = { if (allowed > 0) used.toFloat() / allowed else 1f },
+            modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+            color = fg,
+            trackColor = fg.copy(alpha = 0.22f),
+            drawStopIndicator = {}
+        )
     }
 }
 
