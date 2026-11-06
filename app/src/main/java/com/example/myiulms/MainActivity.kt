@@ -117,6 +117,7 @@ import com.example.myiulms.domain.attendance.assessAttendance
 import com.example.myiulms.domain.attendance.AttendanceRisk
 import com.example.myiulms.domain.attendance.AttendanceLevel
 import com.example.myiulms.domain.attendance.edpCodeOf
+import com.example.myiulms.ui.components.InfoIconButton
 import com.example.myiulms.ui.components.MyIulmsDropdownMenu
 import com.example.myiulms.ui.components.MyIulmsDropdownMenuDivider
 import com.example.myiulms.ui.components.MyIulmsDropdownMenuHeader
@@ -143,9 +144,7 @@ import com.example.myiulms.ui.policy.PolicyOverflowItem
 import com.example.myiulms.ui.widget.EXTRA_OPEN_TAB
 import com.example.myiulms.ui.policy.rememberAcademicPolicyState
 import com.example.myiulms.ui.theme.*
-import java.text.NumberFormat
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 import kotlin.math.abs
@@ -908,8 +907,8 @@ private fun listBottomClearance(): Dp {
  */
 private val NavDestinations = listOf(
     NavDestination(Icons.Rounded.Event, "Schedule", "Sched.", "Schedule"),
-    NavDestination(Icons.AutoMirrored.Rounded.FactCheck, "Attend.", "Attend", "Attendance"),
-    NavDestination(Icons.Rounded.Assessment, "Result", "Result", "Results"),
+    NavDestination(Icons.AutoMirrored.Rounded.FactCheck, "Attendance", "Attend", "Attendance"),
+    NavDestination(Icons.Rounded.Assessment, "Results", "Results", "Results"),
     NavDestination(Icons.Rounded.School, "Transcript", "Transcr.", "Transcript"),
     NavDestination(Icons.AutoMirrored.Rounded.ReceiptLong, "Vouchers", "Voucher", "Vouchers")
 )
@@ -1502,7 +1501,7 @@ private fun ResultScreen(
         ) {
             item {
                 ScreenHeading(
-                    title = "Academic result",
+                    title = "Results",
                     subtitle = result.title
                         .replace("EXAM RESULT", "", ignoreCase = true)
                         .trim(' ', '(', ')', '-')
@@ -1520,7 +1519,15 @@ private fun ResultScreen(
                                     }
                                 }
                             ) {
-                                Icon(Icons.Rounded.Share, "Share result")
+                                // Same muted tint as InfoIconButton: the ⓘ and
+                                // the Share glyph sit in one row and must read
+                                // as the same weight (onSurfaceVariant =
+                                // #627180 light / #A9B6C0 dark).
+                                Icon(
+                                    Icons.Rounded.Share,
+                                    "Share result",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                     }
@@ -1703,7 +1710,7 @@ private fun ExamScheduleContent(
             item {
                 ScreenHeading(
                     title = "Exam schedule",
-                    subtitle = schedule.title.ifBlank { "Examination schedule" }
+                    subtitle = distinctSubtitle(schedule.title, "Exam schedule", "Dates, times and rooms")
                 )
             }
 
@@ -1713,7 +1720,8 @@ private fun ExamScheduleContent(
                 }
             }
 
-            item {
+            // With no exams the empty state below says it once; no "0" card.
+            if (schedule.entries.isNotEmpty()) item {
                 HeroMetricCard(
                     label = "Scheduled exams",
                     value = "${schedule.entries.size}",
@@ -1914,7 +1922,7 @@ private fun WeeklyScheduleContent(
                     Box(modifier = Modifier.padding(top = AppSpacing.Md)) {
                         ScreenHeading(
                             title = "Weekly class schedule",
-                            subtitle = schedule.title.ifBlank { "Your semester classes" },
+                            subtitle = distinctSubtitle(schedule.title, "Weekly class schedule", "Your semester classes"),
                             // Same slot the result and transcript screens use for
                             // their share buttons, so the affordance reads
                             // identically across the app. It lives here rather than
@@ -1953,7 +1961,13 @@ private fun WeeklyScheduleContent(
                                         }
                                     }
                                 ) {
-                                    Icon(Icons.Rounded.Share, contentDescription = "Share schedule")
+                                    // Heading action tint matches InfoIconButton
+                                    // so every heading action reads identically.
+                                    Icon(
+                                        Icons.Rounded.Share,
+                                        contentDescription = "Share schedule",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
                             }
                         )
@@ -2366,7 +2380,7 @@ private fun ScheduleFocusHost(
 private fun WeeklyScheduleCard(entry: WeeklyScheduleEntry) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(AppRadius.Medium),
+        shape = RoundedCornerShape(AppRadius.Large),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(
@@ -2410,8 +2424,10 @@ private fun WeeklyScheduleCard(entry: WeeklyScheduleEntry) {
             }
             Text(
                 text = entry.courseTitle.ifBlank { "Class" },
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
             // Room and Faculty share one line below the title instead of
             // stacking as two full-width rows.
@@ -2589,13 +2605,10 @@ private fun AttendanceScreen(
                     title = "Attendance",
                     subtitle = "Course-wise sessions and class records",
                     action = {
-                        IconButton(onClick = { showLimitsInfo = true }) {
-                            Icon(
-                                Icons.Rounded.Info,
-                                contentDescription = "How absence limits are estimated",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                        InfoIconButton(
+                            onClick = { showLimitsInfo = true },
+                            contentDescription = "How absence limits are estimated"
+                        )
                     }
                 )
             }
@@ -2621,7 +2634,7 @@ private fun AttendanceCourseCard(course: AttendanceCourse, risk: AttendanceRisk)
     var expanded by rememberSaveable(course.name) { mutableStateOf(false) }
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(AppRadius.Medium),
+        shape = RoundedCornerShape(AppRadius.Large),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(
@@ -2778,7 +2791,7 @@ private fun AttendanceStatsRow(course: AttendanceCourse, risk: AttendanceRisk) {
         verticalArrangement = Arrangement.spacedBy(AppSpacing.Sm),
         maxItemsInEachRow = 4
     ) {
-        val cell = Modifier.weight(1f).widthIn(min = 72.dp)
+        val cell = Modifier.weight(1f).widthIn(min = 64.dp)
         CompactStat(course.present.toString(), "Present", cell)
         CompactStat(course.absent.toString(), "Absent", cell, valueColor = absentTint)
         CompactStat(course.totalSessions.toString(), "Held", cell)
@@ -2868,8 +2881,10 @@ private fun ExamScheduleCard(entry: ExamScheduleEntry) {
                 Text(
                     text = entry.courseTitle,
                     modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
                 if (entry.edpCode.isNotBlank()) {
                     Spacer(Modifier.width(8.dp))
@@ -2969,7 +2984,7 @@ private fun VoucherScreen(
         return
     }
 
-    val totalOutstanding = vouchers.sumOf { parseMoney(it.amount) }
+    val totalOutstanding = vouchers.sumOf { parseRupees(it.amount) }
 
     // Data-present branch only: `loading` here always means a refresh, never the first load.
     PullToRefreshBox(
@@ -2988,10 +3003,11 @@ private fun VoucherScreen(
             verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
         ) {
             item {
+                // The count lives in the total card below; the subtitle only says
+                // what the screen is.
                 ScreenHeading(
                     "Fee vouchers",
-                    if (vouchers.isEmpty()) "No outstanding balance"
-                    else "${vouchers.size} outstanding voucher${if (vouchers.size == 1) "" else "s"}"
+                    if (vouchers.isEmpty()) "No outstanding balance" else "Outstanding fees and payment slips"
                 )
             }
 
@@ -2999,7 +3015,7 @@ private fun VoucherScreen(
                 item {
                     HeroMetricCard(
                         label = "Total outstanding",
-                        value = "Rs ${formatMoney(totalOutstanding)}",
+                        value = formatRupees(totalOutstanding),
                         helper = nearestDueText(vouchers),
                         icon = Icons.Rounded.AccountBalanceWallet
                     )
@@ -3045,7 +3061,13 @@ private fun VoucherCard(
         Column(Modifier.padding(AppSpacing.Lg)) {
             Row(verticalAlignment = Alignment.Top) {
                 Column(Modifier.weight(1f)) {
-                    Text(voucher.description, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        voucher.description,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Spacer(Modifier.height(3.dp))
                     Text(
                         voucher.semester,
@@ -3060,13 +3082,13 @@ private fun VoucherCard(
             Spacer(Modifier.height(14.dp))
 
             Text(
-                "Rs ${voucher.amount}",
+                formatRupees(parseRupees(voucher.amount)),
                 style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.primary
             )
 
             Spacer(Modifier.height(13.dp))
-            InfoLine(Icons.Rounded.Event, "Due date", voucher.dueDate)
+            InfoLine(Icons.Rounded.Event, "Due date", shortPortalDate(voucher.dueDate))
             Spacer(Modifier.height(8.dp))
             InfoLine(Icons.Rounded.ConfirmationNumber, "Voucher no.", voucher.number)
 
@@ -3090,7 +3112,13 @@ private fun VoucherCard(
                     Spacer(Modifier.width(AppSpacing.Sm))
                     Text("Opening voucher…")
                 } else {
-                    Icon(Icons.Rounded.Download, contentDescription = null)
+                    // Same receipt glyph as the Vouchers tab, so the action reads
+                    // as "open this fee slip".
+                    Icon(
+                        Icons.AutoMirrored.Rounded.ReceiptLong,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp)
+                    )
                     Spacer(Modifier.width(AppSpacing.Sm))
                     Text(
                         if (voucher.printVoucherNumber.isNotBlank() &&
@@ -3167,7 +3195,13 @@ private fun TranscriptScreen(
                                     }
                                 }
                             ) {
-                                Icon(Icons.Rounded.Share, "Share transcript")
+                                // Same muted tint as InfoIconButton for visual
+                                // harmony with the ⓘ beside it.
+                                Icon(
+                                    Icons.Rounded.Share,
+                                    "Share transcript",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                     }
@@ -3293,12 +3327,18 @@ private fun CreditProgressCard(completed: Int, remaining: Int) {
 
             Spacer(Modifier.height(14.dp))
 
+            // 4dp hairline with a flush track: gapSize = 0 removes the
+            // Material gap between fill and track, and an empty
+            // drawStopIndicator removes the stop dot the library draws at the
+            // far right. StrokeCap.Round (library default) keeps the ends soft
+            // without an outer clip, so the bar stays a clean straight rail.
             LinearProgressIndicator(
                 progress = { progress },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(8.dp)
-                    .clip(CircleShape)
+                    .height(4.dp),
+                gapSize = 0.dp,
+                drawStopIndicator = {}
             )
 
             Spacer(Modifier.height(9.dp))
@@ -3342,7 +3382,10 @@ private fun TranscriptCourseCard(course: Course) {
                     Column(Modifier.weight(1f)) {
                         Text(
                             course.title,
-                            style = MaterialTheme.typography.titleMedium
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
@@ -3532,7 +3575,11 @@ private fun gradeColor(grade: String): Color {
     val g = grade.trim().uppercase()
 
     return when {
-        g == "A" || g == "A-" -> if (dark) GradeStrongDark else GradeStrongLight
+        // B+ is STRONG (green) under the old scheme this cohort is graded by
+        // (81% - 87%, 3.5 points) — see AcademicPolicy.oldScheme. It is
+        // coloured strong everywhere instead of falling into the amber "B"
+        // bucket, so the badge, the card tint and the policy table agree.
+        g == "A" || g == "A-" || g == "B+" -> if (dark) GradeStrongDark else GradeStrongLight
         g.startsWith("B") -> if (dark) GradeAverageDark else GradeAverageLight
         g.startsWith("C") -> if (dark) GradeWeakDark else GradeWeakLight
         g == "D" || g == "F" -> if (dark) GradeCriticalDark else GradeCriticalLight
@@ -3605,8 +3652,10 @@ private fun ScreenHeading(
     subtitle: String,
     action: (@Composable () -> Unit)? = null
 ) {
+    // 48dp minimum, the height of an action icon: headings with and without
+    // icons sit at the same height, so titles never jump between tabs.
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
@@ -3987,12 +4036,6 @@ private fun ErrorBanner(
     }
 }
 
-private fun parseMoney(value: String): Double =
-    value.replace(",", "").replace("Rs", "", ignoreCase = true).trim().toDoubleOrNull() ?: 0.0
-
-private fun formatMoney(value: Double): String =
-    NumberFormat.getNumberInstance(Locale.US).apply { maximumFractionDigits = 0 }.format(value)
-
 private fun formatOneDecimal(value: Double): String =
     if (value % 1.0 == 0.0) value.toInt().toString()
     else String.format(Locale.US, "%.1f", value)
@@ -4002,11 +4045,7 @@ private data class DueInfo(val label: String, val kind: DueKind)
 
 private fun dueStatus(raw: String): DueInfo {
     return try {
-        val clean = raw.replace(Regex("(?<=\\d)(st|nd|rd|th)"), "")
-        val date = LocalDate.parse(
-            clean,
-            DateTimeFormatter.ofPattern("EEEE, d MMMM, yyyy", Locale.ENGLISH)
-        )
+        val date = parsePortalDate(raw) ?: return DueInfo("Due", DueKind.NORMAL)
         val days = ChronoUnit.DAYS.between(LocalDate.now(CampusZone), date)
         when {
             days < 0 -> DueInfo("Overdue", DueKind.OVERDUE)

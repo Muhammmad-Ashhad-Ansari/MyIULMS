@@ -386,7 +386,15 @@ private fun EvaluationLoadingContent(message: String = "Loading evaluations...")
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
         ) {
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(horizontal = AppSpacing.Xxl))
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = AppSpacing.Xxl)
+                    .height(4.dp),
+                // Same rail style as every other bar in the app: 4dp tall with
+                // no gap, so the loading wave sits flush on its track.
+                gapSize = 0.dp
+            )
             Text(
                 text = message,
                 textAlign = TextAlign.Center,
@@ -467,8 +475,15 @@ private fun EvaluationProgressHeader(label: String, done: Int, total: Int, modif
         )
         LinearProgressIndicator(
             progress = { fraction },
-            modifier = Modifier.fillMaxWidth(),
-            trackColor = MaterialTheme.colorScheme.surfaceVariant
+            // Unified progress rail: 4dp hairline, no gap between fill and
+            // track, no stop dot at the end — identical to the Degree progress
+            // bar on the Transcript tab.
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(4.dp),
+            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+            gapSize = 0.dp,
+            drawStopIndicator = {}
         )
     }
 }

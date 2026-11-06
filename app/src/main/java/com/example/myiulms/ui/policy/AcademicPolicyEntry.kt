@@ -13,6 +13,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.example.myiulms.ui.components.InfoIconButton
 import com.example.myiulms.ui.components.MyIulmsDropdownMenuItem
 
 /**
@@ -27,15 +28,11 @@ import com.example.myiulms.ui.components.MyIulmsDropdownMenuItem
 @Composable
 fun PolicyInfoButton(modifier: Modifier = Modifier) {
     val policy = LocalAcademicPolicyState.current
-    IconButton(
+    InfoIconButton(
         onClick = policy::open,
-        modifier = modifier.size(48.dp)
-    ) {
-        Icon(
-            imageVector = Icons.Rounded.Info,
-            contentDescription = "Grading and scholarship policy"
-        )
-    }
+        contentDescription = "Grading and scholarship policy",
+        modifier = modifier
+    )
 }
 
 /** Overflow-menu entry. Matches the existing app-bar utility pattern. */

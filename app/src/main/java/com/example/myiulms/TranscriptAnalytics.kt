@@ -81,7 +81,9 @@ fun isWeakCourse(grade: String): Boolean {
 fun gradeMeaning(grade: String): String {
     val g = grade.trim().uppercase()
     return when {
-        g == "A" || g == "A-" -> "Strong"
+        // B+ keeps the "Strong" label so the word on the card never
+        // contradicts the green colour the same grade is drawn in.
+        g == "A" || g == "A-" || g == "B+" -> "Strong"
         g.startsWith("B") -> "Average"
         g.startsWith("C") -> "Weak"
         // D is a minimum-pass grade under the Main Campus scheme, so it must not

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
@@ -40,6 +41,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -70,10 +72,22 @@ import com.example.myiulms.ui.theme.WarningForegroundDark
 import com.example.myiulms.ui.theme.WarningForegroundLight
 
 /**
+ * Index, in the sheet's LazyColumn, of the section the sheet opens on.
+ *
+ * Item 0 is the new grading scheme, item 1 the previous (old) one — B+ = 3.5,
+ * the scheme this cohort's transcript is graded under. The order of the items
+ * below must stay in step with this constant.
+ */
+private const val OPEN_ON_ITEM_INDEX = 1
+
+/**
  * Academic policy reference for [AcademicPolicy.CAMPUS].
  *
  * Section order is intentional and should be preserved:
  * new scheme, previous scheme, scholarship requirements, official sources.
+ * The list *opens* on the previous scheme ([OPEN_ON_ITEM_INDEX]), which is the
+ * one this cohort's transcript is graded under; the new scheme stays directly
+ * above it, one flick away.
  *
  * The sheet caps at 92% of screen height and scrolls internally so content is
  * never clipped at large font scales. Meaning is never carried by colour alone;
@@ -91,6 +105,16 @@ fun AcademicPolicySheet(onDismissRequest: () -> Unit) {
     // position. That is what produced the bounce at the bottom edge. A fixed dp
     // value derived from configuration is stable across that whole cycle.
     val maxSheetHeight = (LocalConfiguration.current.screenHeightDp * 0.92f).dp
+
+    // Default landing spot for the sheet. The old scheme (B+ = 3.5) is the one
+    // this batch's actual results are graded under, so it is what a student
+    // opens the sheet to verify. The scroll is requested on the first frame,
+    // while the sheet is still animating in, so it lands without a visible
+    // jump; the new scheme remains one flick above.
+    val listState = rememberLazyListState()
+    LaunchedEffect(listState) {
+        listState.scrollToItem(OPEN_ON_ITEM_INDEX)
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismissRequest,
@@ -113,6 +137,7 @@ fun AcademicPolicySheet(onDismissRequest: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
+                state = listState,
                 contentPadding = PaddingValues(
                     start = AppSpacing.Lg,
                     end = AppSpacing.Lg,
@@ -121,7 +146,10 @@ fun AcademicPolicySheet(onDismissRequest: () -> Unit) {
                 ),
                 verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
             ) {
+                // Item 0: the new scheme. Kept first so the documented section
+                // order survives; the sheet simply scrolls past it on open.
                 item { NewSchemeSection(AcademicPolicy.newScheme) }
+                // Item OPEN_ON_ITEM_INDEX: where the sheet lands.
                 item { PreviousSchemeSection(AcademicPolicy.oldScheme) }
                 item { ScholarshipSection(AcademicPolicy.scholarship) }
                 item { VerifyOfficialPoliciesCard() }
