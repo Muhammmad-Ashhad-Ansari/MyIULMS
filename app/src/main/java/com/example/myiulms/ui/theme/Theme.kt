@@ -9,6 +9,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.core.content.edit
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import androidx.compose.ui.graphics.Color
 
 // internal: the home-screen widget reuses these below Android 12.
@@ -94,14 +98,42 @@ internal val DarkColors = darkColorScheme(
     onErrorContainer = Color(0xFFFFDAD6)
 )
 
-// App ka in-app theme toggle ("iulms_ui" → "dark_theme"); set na ho to system.
-// MainActivity aur EvaluationActivity dono yahi padhte hain taake theme match kare.
-fun resolveSavedDarkTheme(context: Context): Boolean {
-    val systemDark = (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-        Configuration.UI_MODE_NIGHT_YES
-    val prefs = context.getSharedPreferences("iulms_ui", Context.MODE_PRIVATE)
-    return if (prefs.contains("dark_theme")) prefs.getBoolean("dark_theme", systemDark) else systemDark
+/**
+ * The in-app light/dark choice ("iulms_ui" → "dark_theme"), held once per
+ * process. Every screen observes this one flow, so no activity instance can
+ * keep a stale copy of the theme: a toggle anywhere updates all of them.
+ * null = no choice yet, follow the phone.
+ */
+object ThemeSettings {
+    private const val PREFS = "iulms_ui"
+    private const val KEY_DARK = "dark_theme"
+
+    @Volatile
+    private var state: MutableStateFlow<Boolean?>? = null
+
+    private fun flow(context: Context): MutableStateFlow<Boolean?> =
+        state ?: synchronized(this) {
+            state ?: MutableStateFlow(
+                context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).run {
+                    if (contains(KEY_DARK)) getBoolean(KEY_DARK, false) else null
+                }
+            ).also { state = it }
+        }
+
+    fun savedDark(context: Context): StateFlow<Boolean?> = flow(context.applicationContext).asStateFlow()
+
+    fun setDark(context: Context, dark: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putBoolean(KEY_DARK, dark) }
+        flow(context.applicationContext).value = dark
+    }
 }
+
+fun isSystemDark(context: Context): Boolean =
+    (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+
+// MainActivity aur EvaluationActivity dono yahi padhte hain taake theme match kare.
+fun resolveSavedDarkTheme(context: Context): Boolean =
+    ThemeSettings.savedDark(context).value ?: isSystemDark(context)
 
 /**
  * Edge-to-edge with status and navigation bar icons matched to the app's own

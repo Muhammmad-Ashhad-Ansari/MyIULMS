@@ -14,6 +14,7 @@ import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.view.View
 import android.view.animation.AccelerateInterpolator
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -31,6 +32,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.lazy.LazyColumn
@@ -184,10 +186,12 @@ class MainActivity : ComponentActivity() {
         // Launch: re-arm the schedule alarm in case it was lost (force-stop clears it).
         NextClassWidgetSession.rescheduleAlarms(this)
 
-        val uiPrefs = getSharedPreferences("iulms_ui", MODE_PRIVATE)
 
         setContent {
-            var darkTheme by remember { mutableStateOf(resolveSavedDarkTheme(this)) }
+            // Observed, not copied: the theme lives in ThemeSettings, outside
+            // this activity, so it can never be restored stale.
+            val savedDark by ThemeSettings.savedDark(this).collectAsState()
+            val darkTheme = savedDark ?: isSystemInDarkTheme()
             LaunchedEffect(darkTheme) { applySystemBars(darkTheme) }
 
             MyIULMSTheme(darkTheme = darkTheme) {
@@ -198,9 +202,7 @@ class MainActivity : ComponentActivity() {
                     App(
                         darkTheme = darkTheme,
                         onThemeToggle = {
-                            val next = !darkTheme
-                            darkTheme = next
-                            uiPrefs.edit { putBoolean("dark_theme", next) }
+                            ThemeSettings.setDark(this, !darkTheme)
                         },
                         tabRequest = tabRequest,
                         onTabRequestHandled = { tabRequest = null }
@@ -592,6 +594,34 @@ private fun HomeScreen(
     }
     val snackbarHostState = remember { SnackbarHostState() }
     val pageScope = rememberCoroutineScope()
+
+    // The one way to change tabs, shared by the nav capsule and Back. Adjacent
+    // tabs keep the short one-page slide: at a distance of one the pager cannot
+    // pre-jump, so the animation is a single clean leg that matches a swipe.
+    // Non-adjacent moves snap instantly instead, because `animateScrollToPage`
+    // pre-jumps to one viewport away whenever the target is three or more pages
+    // off (foundation's `MaxPagesForAnimateScroll`), which briefly lands on, and
+    // composes, an unintended intermediate tab. `scrollToPage` goes straight to
+    // the target; the pill keeps animating on its own weight springs.
+    fun goToPage(index: Int) {
+        pageScope.launch {
+            if (abs(index - pagerState.currentPage) <= 1) {
+                pagerState.animateScrollToPage(index)
+            } else {
+                pagerState.scrollToPage(index)
+            }
+        }
+    }
+
+    // Back from any other tab returns to Schedule first; from Schedule the
+    // system closes the app as usual. Uses goToPage so that Back from Results,
+    // Transcript or Vouchers jumps straight home rather than sliding through
+    // (and briefly showing) every tab in between. A second press while the
+    // one-page slide from Attendance is still running is consumed, not re-run.
+    BackHandler(enabled = settledPage != SCHEDULE_PAGE) {
+        if (pagerState.isScrollInProgress && pagerState.targetPage == SCHEDULE_PAGE) return@BackHandler
+        goToPage(SCHEDULE_PAGE)
+    }
     val saveableStateHolder = rememberSaveableStateHolder()
 
     LaunchedEffect(vm.lastUpdatedAt) {
@@ -669,26 +699,7 @@ private fun HomeScreen(
                     // Drive the pager directly. There is no `tab` state to feed
                     // back into an effect, so a tap can never cancel its own
                     // animation.
-                    onSelect = { index ->
-                        pageScope.launch {
-                            // Adjacent tabs keep the short one-page slide: at a
-                            // distance of one the pager cannot pre-jump, so the
-                            // animation is a single clean leg that matches a swipe.
-                            // Non-adjacent taps snap instantly instead, because
-                            // `animateScrollToPage` pre-jumps to one viewport away
-                            // whenever the target is three or more pages off
-                            // (foundation's `MaxPagesForAnimateScroll`), which
-                            // briefly lands on — and composes — an unintended
-                            // intermediate tab. `scrollToPage` goes straight to the
-                            // target; the pill keeps animating on its own weight
-                            // springs while the page content changes instantly.
-                            if (abs(index - pagerState.currentPage) <= 1) {
-                                pagerState.animateScrollToPage(index)
-                            } else {
-                                pagerState.scrollToPage(index)
-                            }
-                        }
-                    },
+                    onSelect = ::goToPage,
                     useCompactLabels = useCompactNavLabels,
                     showLabels = showNavLabels,
                     darkTheme = darkTheme
