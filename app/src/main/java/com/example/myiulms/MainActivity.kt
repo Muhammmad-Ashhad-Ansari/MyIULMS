@@ -32,6 +32,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.selectable
@@ -595,6 +597,17 @@ private fun HomeScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val pageScope = rememberCoroutineScope()
 
+    // One refresh indicator app-wide: the pull spinner, shown only for a
+    // refresh the student asked for (a pull, or the toolbar button). Background
+    // syncs stay quiet. One flag per tab, cleared when that tab stops loading.
+    val manualPulls = remember { List(TAB_COUNT) { ManualPull() } }
+    for (page in 0 until TAB_COUNT) {
+        val loading = vm.screenStateFor(page).loading
+        LaunchedEffect(page, loading) {
+            if (!loading) manualPulls[page].pulled = false
+        }
+    }
+
     // The one way to change tabs, shared by the nav capsule and Back. Adjacent
     // tabs keep the short one-page slide: at a distance of one the pager cannot
     // pre-jump, so the animation is a single clean leg that matches a swipe.
@@ -680,10 +693,13 @@ private fun HomeScreen(
                 PortalTopBar(
                     darkTheme = darkTheme,
                     onThemeToggle = onThemeToggle,
-                    onRefresh = { vm.refresh(settledPage) },
-                    // The Schedule tab reports syncs through its freshness line
-                    // only; other tabs keep the toolbar spinner.
-                    refreshing = screenState.loading && settledPage != SCHEDULE_PAGE,
+                    onRefresh = {
+                        manualPulls[settledPage].pulled = true
+                        vm.refresh(settledPage)
+                    },
+                    // Progress shows as the tab's pull spinner; the button only
+                    // rests while a load is already running.
+                    refreshEnabled = !screenState.loading,
                     onCheckForUpdates = vm::checkForUpdates,
                     onLogout = vm::logout,
                     studentName = vm.studentName
@@ -725,13 +741,6 @@ private fun HomeScreen(
                         bottom = 0.dp
                     )
             ) {
-                if (screenState.loading && hasData && settledPage != SCHEDULE_PAGE) {
-                    LinearProgressIndicator(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .semantics { contentDescription = "Refreshing current screen" }
-                    )
-                }
                 if (hasData && screenState.error != null) {
                     ErrorBanner(screenState.error, onRetry = { vm.refresh(settledPage) })
                 }
@@ -763,6 +772,7 @@ private fun HomeScreen(
                                 pageState,
                                 onRetry = { vm.refresh(page) },
                                 onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) },
+                                manualPull = manualPulls[page],
                                 snackbarHostState = snackbarHostState,
                                 studentName = vm.studentName
                             )
@@ -771,21 +781,24 @@ private fun HomeScreen(
                                 vm.weeklySchedule?.entries,
                                 pageState,
                                 onRetry = { vm.refresh(page) },
-                                onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) }
+                                onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) },
+                                manualPull = manualPulls[page]
                             )
                             2 -> ResultScreen(
                                 vm.examResult,
                                 vm.studentName,
                                 pageState,
                                 onRetry = { vm.refresh(page) },
-                                onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) }
+                                onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) },
+                                manualPull = manualPulls[page]
                             )
                             3 -> TranscriptScreen(
                                 vm.transcript,
                                 vm.studentName,
                                 pageState,
                                 onRetry = { vm.refresh(page) },
-                                onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) }
+                                onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) },
+                                manualPull = manualPulls[page]
                             )
                             else -> VoucherScreen(
                                 vouchers = vm.vouchers,
@@ -793,6 +806,7 @@ private fun HomeScreen(
                                 screenState = pageState,
                                 onRetry = { vm.refresh(page) },
                                 onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) },
+                                manualPull = manualPulls[page],
                                 onDownload = { voucher -> vm.openVoucher(context, voucher) }
                             )
                         }
@@ -1186,7 +1200,7 @@ private fun PortalTopBar(
     darkTheme: Boolean,
     onThemeToggle: () -> Unit,
     onRefresh: () -> Unit,
-    refreshing: Boolean,
+    refreshEnabled: Boolean,
     onCheckForUpdates: () -> Unit,
     onLogout: () -> Unit
 ) {
@@ -1223,20 +1237,8 @@ private fun PortalTopBar(
             }
         },
         actions = {
-            IconButton(onClick = onRefresh, enabled = !refreshing) {
-                if (refreshing) {
-                    CircularProgressIndicator(
-                        modifier = Modifier
-                            .size(20.dp)
-                            .semantics {
-                                liveRegion = LiveRegionMode.Polite
-                                contentDescription = "Refreshing current screen"
-                            },
-                        strokeWidth = 2.dp
-                    )
-                } else {
-                    Icon(Icons.Rounded.Refresh, contentDescription = "Refresh current screen")
-                }
+            IconButton(onClick = onRefresh, enabled = refreshEnabled) {
+                Icon(Icons.Rounded.Refresh, contentDescription = "Refresh current screen")
             }
 
             IconButton(onClick = onThemeToggle) {
@@ -1467,7 +1469,8 @@ private fun ResultScreen(
     studentName: String?,
     screenState: ScreenLoadState,
     onRetry: () -> Unit,
-    onPullRefresh: () -> Unit
+    onPullRefresh: () -> Unit,
+    manualPull: ManualPull
 ) {
     if (result == null) {
         LoadStateContent("Loading latest result…", screenState, onRetry)
@@ -1483,8 +1486,8 @@ private fun ResultScreen(
 
     // Data-present branch only: `loading` here always means a refresh, never the first load.
     PullToRefreshBox(
-        isRefreshing = screenState.loading,
-        onRefresh = onPullRefresh,
+        isRefreshing = manualPull.isRefreshing(screenState.loading),
+        onRefresh = { manualPull.pulled = true; onPullRefresh() },
         modifier = Modifier.fillMaxSize()
     ) {
         LazyColumn(
@@ -1609,6 +1612,7 @@ private fun SchedulesScreen(
     screenState: ScreenLoadState,
     onRetry: () -> Unit,
     onPullRefresh: () -> Unit,
+    manualPull: ManualPull,
     snackbarHostState: SnackbarHostState,
     studentName: String?
 ) {
@@ -1648,6 +1652,7 @@ private fun SchedulesScreen(
                         screenState = screenState,
                         onRetry = onRetry,
                         onPullRefresh = onPullRefresh,
+                        manualPull = manualPull,
                         snackbarHostState = snackbarHostState,
                         enabled = selectedSubTab == 0,
                         studentName = studentName
@@ -1658,7 +1663,7 @@ private fun SchedulesScreen(
                     Column {
                         // No day chips here, so the line sits under the sub-tab row.
                         FreshnessLine(freshnessNote)
-                        ExamScheduleContent(examSchedule, screenState, onRetry, onPullRefresh)
+                        ExamScheduleContent(examSchedule, screenState, onRetry, onPullRefresh, manualPull)
                     }
                 }
             }
@@ -1671,7 +1676,8 @@ private fun ExamScheduleContent(
     schedule: ExamSchedule?,
     screenState: ScreenLoadState,
     onRetry: () -> Unit,
-    onPullRefresh: () -> Unit
+    onPullRefresh: () -> Unit,
+    manualPull: ManualPull
 ) {
     if (schedule == null) {
         LoadStateContent("Loading exam schedule…", screenState, onRetry)
@@ -1679,7 +1685,6 @@ private fun ExamScheduleContent(
     }
 
     // Data-present branch only: `loading` here always means a refresh, never the first load.
-    val manualPull = rememberManualPull(screenState.loading)
     PullToRefreshBox(
         isRefreshing = manualPull.isRefreshing(screenState.loading),
         onRefresh = { manualPull.pulled = true; onPullRefresh() },
@@ -1757,22 +1762,13 @@ private fun FreshnessLine(note: String?) {
 }
 
 /**
- * Pull indicator that spins only for a refresh the student asked for: a
- * background sync never sets [pulled]. Reset when the load ends, so the next
- * automatic sync stays quiet again.
+ * Pull indicator that spins only for a refresh the student asked for (a pull or
+ * the toolbar button): a background sync never sets [pulled]. Held per tab by
+ * HomeScreen and reset when that tab's load ends.
  */
 private class ManualPull {
     var pulled by mutableStateOf(false)
     fun isRefreshing(loading: Boolean) = pulled && loading
-}
-
-@Composable
-private fun rememberManualPull(loading: Boolean): ManualPull {
-    val pull = remember { ManualPull() }
-    LaunchedEffect(loading) {
-        if (!loading) pull.pulled = false
-    }
-    return pull
 }
 
 @Composable
@@ -1782,6 +1778,7 @@ private fun WeeklyScheduleContent(
     screenState: ScreenLoadState,
     onRetry: () -> Unit,
     onPullRefresh: () -> Unit,
+    manualPull: ManualPull,
     snackbarHostState: SnackbarHostState,
     enabled: Boolean,
     studentName: String?
@@ -1887,7 +1884,6 @@ private fun WeeklyScheduleContent(
         FreshnessLine(freshnessNote)
 
         // Data-present branch only: `loading` here always means a refresh, never the first load.
-        val manualPull = rememberManualPull(screenState.loading)
         PullToRefreshBox(
             isRefreshing = manualPull.isRefreshing(screenState.loading),
             onRefresh = { manualPull.pulled = true; onPullRefresh() },
@@ -2561,7 +2557,8 @@ private fun AttendanceScreen(
     timetable: List<WeeklyScheduleEntry>?,
     screenState: ScreenLoadState,
     onRetry: () -> Unit,
-    onPullRefresh: () -> Unit
+    onPullRefresh: () -> Unit,
+    manualPull: ManualPull
 ) {
     if (attendance == null) {
         LoadStateContent("Loading attendance…", screenState, onRetry)
@@ -2573,8 +2570,8 @@ private fun AttendanceScreen(
 
     // Data-present branch only: `loading` here always means a refresh, never the first load.
     PullToRefreshBox(
-        isRefreshing = screenState.loading,
-        onRefresh = onPullRefresh,
+        isRefreshing = manualPull.isRefreshing(screenState.loading),
+        onRefresh = { manualPull.pulled = true; onPullRefresh() },
         modifier = Modifier.fillMaxSize()
     ) {
         LazyColumn(
@@ -2964,6 +2961,7 @@ private fun VoucherScreen(
     screenState: ScreenLoadState,
     onRetry: () -> Unit,
     onPullRefresh: () -> Unit,
+    manualPull: ManualPull,
     onDownload: (Voucher) -> Unit
 ) {
     if (vouchers == null) {
@@ -2975,8 +2973,8 @@ private fun VoucherScreen(
 
     // Data-present branch only: `loading` here always means a refresh, never the first load.
     PullToRefreshBox(
-        isRefreshing = screenState.loading,
-        onRefresh = onPullRefresh,
+        isRefreshing = manualPull.isRefreshing(screenState.loading),
+        onRefresh = { manualPull.pulled = true; onPullRefresh() },
         modifier = Modifier.fillMaxSize()
     ) {
         LazyColumn(
@@ -3115,7 +3113,8 @@ private fun TranscriptScreen(
     studentName: String?,
     screenState: ScreenLoadState,
     onRetry: () -> Unit,
-    onPullRefresh: () -> Unit
+    onPullRefresh: () -> Unit,
+    manualPull: ManualPull
 ) {
     if (transcript == null) {
         LoadStateContent("Loading transcript…", screenState, onRetry)
@@ -3137,8 +3136,8 @@ private fun TranscriptScreen(
 
     // Data-present branch only: `loading` here always means a refresh, never the first load.
     PullToRefreshBox(
-        isRefreshing = screenState.loading,
-        onRefresh = onPullRefresh,
+        isRefreshing = manualPull.isRefreshing(screenState.loading),
+        onRefresh = { manualPull.pulled = true; onPullRefresh() },
         modifier = Modifier.fillMaxSize()
     ) {
         LazyColumn(
@@ -3877,10 +3876,38 @@ private fun LoadStateContent(
         return
     }
 
+    // The message says "Pull down to try again", so the error state must take a
+    // pull too, on every tab. Same rule as the lists: the spinner shows only
+    // for the pull itself. Pulling retries exactly like the button.
+    val manualPull = remember { ManualPull() }
+    LaunchedEffect(state.loading) {
+        if (!state.loading) manualPull.pulled = false
+    }
+    PullToRefreshBox(
+        isRefreshing = manualPull.isRefreshing(state.loading),
+        onRefresh = { manualPull.pulled = true; onRetry() },
+        modifier = Modifier.fillMaxSize()
+    ) {
+        // A pull needs scrollable content to drag. The column scrolls (it never
+        // overflows) and is at least screen-tall, so the card stays centred.
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            ErrorStateCard(
+                error = error,
+                onRetry = onRetry,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .heightIn(min = maxHeight)
+                    .padding(24.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ErrorStateCard(error: String, onRetry: () -> Unit, modifier: Modifier = Modifier) {
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
+        modifier = modifier,
         contentAlignment = Alignment.Center
     ) {
         Card(
