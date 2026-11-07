@@ -23,7 +23,10 @@ import androidx.core.content.edit
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -31,6 +34,11 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -3315,6 +3323,16 @@ private fun TranscriptScreen(
     val completed = remember(transcript) { completedHours(transcript.courses) }
     val remaining = remember(transcript) { remainingHours(transcript.courses) }
 
+    // Clean CGPA (unofficial): the portal formula without F/W/I/XF attempts.
+    // Offered only when the transcript has such attempts; otherwise it would
+    // simply equal the official figure.
+    val clean = remember(transcript) { cleanCgpa(transcript.courses) }
+    val cleanAvailable = remember(transcript) { clean != null && hasExcludedAttempts(transcript.courses) }
+    var cleanCgpaEnabled by rememberSaveable { mutableStateOf(false) }
+    val showClean = cleanCgpaEnabled && cleanAvailable
+    // One-time hint until the toggle is first used (remembered on the device).
+    val cleanDiscovered by OnboardingHints.cleanCgpaDiscovered(context).collectAsState()
+
     // Degree bar reveal, held at screen level (not inside the LazyColumn item)
     // so scrolling the card away and back never replays it. It replays when
     // the tab is opened again (the screen is recreated) and after every
@@ -3387,10 +3405,27 @@ private fun TranscriptScreen(
 
             item {
                 HeroMetricCard(
-                    "Cumulative GPA",
-                    transcript.cgpa.ifBlank { "—" },
-                    "${transcript.courses.size} transcript entries",
-                    Icons.Rounded.School
+                    label = "Cumulative GPA",
+                    value = clean?.takeIf { showClean }?.let { String.format(Locale.US, "%.2f", it.gpa) }
+                        ?: transcript.cgpa.ifBlank { "—" },
+                    helper = when {
+                        showClean -> "Unofficial · Excluding F/W/I"
+                        cleanAvailable && !cleanDiscovered -> "✨ Tap icon to hide F/W grades"
+                        else -> "${transcript.courses.size} transcript entries"
+                    },
+                    icon = Icons.Rounded.School,
+                    trailing = if (cleanAvailable) {
+                        {
+                            CleanCgpaToggle(
+                                checked = cleanCgpaEnabled,
+                                pulse = !cleanDiscovered,
+                                onCheckedChange = {
+                                    OnboardingHints.markCleanCgpaDiscovered(context)
+                                    cleanCgpaEnabled = it
+                                }
+                            )
+                        }
+                    } else null
                 )
             }
 
@@ -3465,6 +3500,69 @@ private fun TranscriptScreen(
                 )
             }
         }
+    }
+}
+
+/**
+ * Excluding-F/W/I toggle in the GPA card's trailing slot, where the round
+ * icon normally sits: same 52dp circle, so the card does not grow. Off: a
+ * soft tinted circle; on: filled primary. The card's figure and helper line
+ * say what changed ("Unofficial · Excluding F/W/I").
+ */
+@Composable
+private fun CleanCgpaToggle(checked: Boolean, pulse: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    val haptics = rememberAppHaptics()
+    // Discoverability: until first used, the circle breathes 1.0 → 1.15 → 1.0.
+    // The infinite transition exists only while [pulse] is true, so the first
+    // tap removes it and the button is instantly back at rest. The scale is
+    // read in graphicsLayer, so the loop only redraws, never recomposes.
+    val pulseScale = if (pulse) {
+        rememberInfiniteTransition(label = "cleanTogglePulse").animateFloat(
+            initialValue = 1f,
+            targetValue = 1.15f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(850, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "cleanTogglePulseScale"
+        )
+    } else {
+        null
+    }
+    val container by animateColorAsState(
+        targetValue = if (checked) MaterialTheme.colorScheme.primary
+        else MaterialTheme.colorScheme.primary.copy(alpha = .12f),
+        label = "cleanToggleContainer"
+    )
+    val content by animateColorAsState(
+        targetValue = if (checked) MaterialTheme.colorScheme.onPrimary
+        else MaterialTheme.colorScheme.onPrimaryContainer,
+        label = "cleanToggleContent"
+    )
+    IconToggleButton(
+        checked = checked,
+        onCheckedChange = {
+            haptics.tick()
+            onCheckedChange(it)
+        },
+        modifier = Modifier
+            .size(52.dp)
+            .graphicsLayer {
+                val scale = pulseScale?.value ?: 1f
+                scaleX = scale
+                scaleY = scale
+            },
+        colors = IconButtonDefaults.iconToggleButtonColors(
+            containerColor = container,
+            contentColor = content,
+            checkedContainerColor = container,
+            checkedContentColor = content
+        )
+    ) {
+        Icon(
+            Icons.Rounded.AutoAwesome,
+            contentDescription = if (checked) "Show official CGPA" else "Show CGPA without F, W and I grades (unofficial)"
+        )
     }
 }
 
@@ -3608,47 +3706,74 @@ private fun HeroMetricCard(
     value: String,
     helper: String,
     icon: ImageVector,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /**
+     * Optional control in place of the round icon at the card's trailing edge
+     * (e.g. a toggle), so it costs no extra height.
+     */
+    trailing: (@Composable () -> Unit)? = null
 ) {
     Card(
         modifier.fillMaxWidth(),
         shape = RoundedCornerShape(AppRadius.Hero),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
     ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    label,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-                Spacer(Modifier.height(5.dp))
-                Text(
-                    value,
-                    style = MaterialTheme.typography.displaySmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    helper,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-            }
-
-            Box(
-                Modifier
-                    .size(52.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = .12f)),
-                contentAlignment = Alignment.Center
+        Column(Modifier.padding(20.dp)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(icon, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Spacer(Modifier.height(5.dp))
+                    // The figure slides when it changes (e.g. Clean CGPA on/off):
+                    // the new value rises in as the old one leaves upward.
+                    AnimatedContent(
+                        targetState = value,
+                        transitionSpec = {
+                            (slideInVertically(tween(260)) { it / 2 } + fadeIn(tween(260))) togetherWith
+                                (slideOutVertically(tween(200)) { -it / 2 } + fadeOut(tween(160)))
+                        },
+                        label = "heroValue"
+                    ) { shown ->
+                        Text(
+                            shown,
+                            style = MaterialTheme.typography.displaySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    // Cross-fades when the helper line changes meaning.
+                    AnimatedContent(
+                        targetState = helper,
+                        transitionSpec = { fadeIn(tween(220, delayMillis = 60)) togetherWith fadeOut(tween(160)) },
+                        label = "heroHelper"
+                    ) { shown ->
+                        Text(
+                            shown,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                }
+
+                if (trailing != null) {
+                    trailing()
+                } else {
+                    Box(
+                        Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = .12f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(icon, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
+                }
             }
         }
     }

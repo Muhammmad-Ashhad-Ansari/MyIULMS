@@ -42,6 +42,45 @@ fun completedHours(courses: List<Course>): Int =
             completed.hours.toDoubleOrNull()?.toInt() ?: 0
         }
 
+/** A weighted grade-point average and what it was computed over. */
+data class GpaSummary(val gpa: Double, val creditHours: Double, val attempts: Int)
+
+/**
+ * "Clean CGPA": the CGPA without failed or unfinished attempts. Unofficial.
+ *
+ * The portal's own CGPA (verified against live data) is
+ *   Σ(points × hours) / Σ hours over EVERY attempt with numeric grade points:
+ * an F counts as 0 points with its full hours and keeps counting after the
+ * course is passed; W and I carry blank points and are left out.
+ *
+ * This applies the same formula and the same "every attempt, no replacement"
+ * rule, but drops F, W, I and XF attempts. Rows without numeric grade points
+ * (e.g. PASS) or without positive hours are ignored, as the portal does.
+ * Repeated courses are deliberately NOT de-duplicated.
+ *
+ * Returns null when no attempt qualifies.
+ */
+fun cleanCgpa(courses: List<Course>): GpaSummary? {
+    val counted = courses.mapNotNull { course ->
+        val grade = course.grade.trim().uppercase()
+        val hours = course.hours.trim().toDoubleOrNull()?.takeIf { it > 0.0 }
+        val points = course.gpa.trim().toDoubleOrNull()
+        if (grade.isBlank() || grade in nonCompletionGrades || hours == null || points == null) null
+        else hours to points
+    }
+    val totalHours = counted.sumOf { it.first }
+    if (totalHours == 0.0) return null
+    return GpaSummary(
+        gpa = counted.sumOf { (hours, points) -> hours * points } / totalHours,
+        creditHours = totalHours,
+        attempts = counted.size
+    )
+}
+
+/** True when the transcript has any F, W, I or XF attempt, i.e. Clean CGPA would differ. */
+fun hasExcludedAttempts(courses: List<Course>): Boolean =
+    courses.any { it.grade.trim().uppercase() in nonCompletionGrades }
+
 fun remainingHours(courses: List<Course>): Int =
     (DEGREE_TOTAL_CREDIT_HOURS - completedHours(courses)).coerceAtLeast(0)
 
