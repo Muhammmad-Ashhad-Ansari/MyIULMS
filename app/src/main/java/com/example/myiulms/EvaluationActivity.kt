@@ -108,6 +108,7 @@ import com.example.myiulms.ui.theme.WarningContainerLight
 import com.example.myiulms.ui.theme.WarningForegroundDark
 import com.example.myiulms.ui.theme.WarningForegroundLight
 import com.example.myiulms.ui.theme.applySystemBars
+import com.example.myiulms.ui.components.rememberRevealedProgress
 import com.example.myiulms.ui.theme.resolveSavedDarkTheme
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -462,6 +463,8 @@ private fun EvaluationAllCompleteContent(onRefreshAppData: () -> Unit) {
 @Composable
 private fun EvaluationProgressHeader(label: String, done: Int, total: Int, modifier: Modifier = Modifier) {
     val fraction = if (total == 0) 0f else done.toFloat() / total
+    // Fills from 0 on first show, then glides forward as each course is done.
+    val revealed = rememberRevealedProgress(fraction)
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -474,7 +477,7 @@ private fun EvaluationProgressHeader(label: String, done: Int, total: Int, modif
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         LinearProgressIndicator(
-            progress = { fraction },
+            progress = revealed,
             // Unified progress rail: 4dp hairline, no gap between fill and
             // track, no stop dot at the end — identical to the Degree progress
             // bar on the Transcript tab.

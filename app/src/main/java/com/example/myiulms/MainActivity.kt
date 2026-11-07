@@ -14,14 +14,20 @@ import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.view.View
 import android.view.animation.AccelerateInterpolator
-import androidx.activity.compose.BackHandler
+import androidx.activity.BackEventCompat
+import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.edit
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -38,6 +44,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
@@ -55,7 +62,6 @@ import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.automirrored.rounded.ReceiptLong
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material.icons.rounded.NotificationsOff
@@ -69,11 +75,10 @@ import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -119,6 +124,9 @@ import com.example.myiulms.domain.attendance.AttendanceLevel
 import com.example.myiulms.domain.attendance.edpCodeOf
 import com.example.myiulms.ui.components.InfoIconButton
 import com.example.myiulms.ui.components.MyIulmsDropdownMenu
+import com.example.myiulms.ui.components.MyIulmsPullToRefresh
+import com.example.myiulms.ui.components.rememberAppHaptics
+import com.example.myiulms.ui.components.rememberRevealedProgress
 import com.example.myiulms.ui.components.MyIulmsDropdownMenuDivider
 import com.example.myiulms.ui.components.MyIulmsDropdownMenuHeader
 import com.example.myiulms.ui.components.MyIulmsDropdownMenuItem
@@ -150,6 +158,7 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 
@@ -565,6 +574,11 @@ private fun LoginScreen(
 private const val TAB_COUNT = 5
 private const val SCHEDULE_PAGE = 0
 
+// Results and Transcript lists: heading is item 0, the GPA card item 1.
+private const val RESULTS_PAGE = 2
+private const val TRANSCRIPT_PAGE = 3
+private const val GPA_HERO_INDEX = 1
+
 @Composable
 private fun HomeScreen(
     vm: MainViewModel,
@@ -607,6 +621,26 @@ private fun HomeScreen(
         }
     }
 
+    // Results and Transcript scroll positions, hoisted so the shared top bar
+    // can see them. Once the GPA card (item 1) has scrolled completely off the
+    // screen, the top bar swaps the student's name for the GPA. derivedStateOf:
+    // the top bar recomposes only when that answer flips, not on every pixel.
+    val resultsListState = rememberLazyListState()
+    val transcriptListState = rememberLazyListState()
+    val gpaTitle by remember {
+        derivedStateOf {
+            when (pagerState.settledPage) {
+                RESULTS_PAGE -> vm.examResult?.gpa?.takeIf {
+                    it.isNotBlank() && resultsListState.firstVisibleItemIndex > GPA_HERO_INDEX
+                }?.let { "GPA: $it" }
+                TRANSCRIPT_PAGE -> vm.transcript?.cgpa?.takeIf {
+                    it.isNotBlank() && transcriptListState.firstVisibleItemIndex > GPA_HERO_INDEX
+                }?.let { "CGPA: $it" }
+                else -> null
+            }
+        }
+    }
+
     // The one way to change tabs, shared by the nav capsule and Back. Adjacent
     // tabs keep the short one-page slide: at a distance of one the pager cannot
     // pre-jump, so the animation is a single clean leg that matches a swipe.
@@ -626,13 +660,56 @@ private fun HomeScreen(
     }
 
     // Back from any other tab returns to Schedule first; from Schedule the
-    // system closes the app as usual. Uses goToPage so that Back from Results,
-    // Transcript or Vouchers jumps straight home rather than sliding through
-    // (and briefly showing) every tab in between. A second press while the
-    // one-page slide from Attendance is still running is consumed, not re-run.
-    BackHandler(enabled = settledPage != SCHEDULE_PAGE) {
-        if (pagerState.isScrollInProgress && pagerState.targetPage == SCHEDULE_PAGE) return@BackHandler
-        goToPage(SCHEDULE_PAGE)
+    // system closes the app as usual.
+    //
+    // Predictive back (Android 14+): while the back swipe is held, the system
+    // streams BackEventCompat.progress (0..1). It is stored in [backProgress]
+    // and read only inside the pager's graphicsLayer, so the gesture never
+    // recomposes the tabs. The current tab shrinks to 90%, rounds its corners
+    // and drifts away from the swiping edge, with a live Schedule preview
+    // composed behind it for the duration of the gesture only.
+    //   - Swipe finished: the flow completes; the pager jumps to Schedule
+    //     (which is what was already showing behind) and the transform resets.
+    //   - Swipe cancelled: the flow throws CancellationException; progress
+    //     springs back to 0 on a separate scope, then the preview is removed.
+    // Below Android 14 (or for a plain back press) the flow completes with no
+    // progress events, so this is an ordinary Back: goToPage slides one tab
+    // or jumps straight home from distant tabs, never through the ones between.
+    // A second press while the slide from Attendance is still running is
+    // consumed, not re-run.
+    val backProgress = remember { Animatable(0f) }
+    var backPreviewVisible by remember { mutableStateOf(false) }
+    var backFromLeftEdge by remember { mutableStateOf(true) }
+    PredictiveBackHandler(enabled = settledPage != SCHEDULE_PAGE) { events ->
+        if (pagerState.isScrollInProgress && pagerState.targetPage == SCHEDULE_PAGE) {
+            events.collect { }
+            return@PredictiveBackHandler
+        }
+        var tracked = false
+        try {
+            events.collect { event ->
+                if (!tracked) {
+                    tracked = true
+                    backPreviewVisible = true
+                }
+                backFromLeftEdge = event.swipeEdge == BackEventCompat.EDGE_LEFT
+                backProgress.snapTo(event.progress)
+            }
+            if (tracked) {
+                // Schedule is already on screen behind the shrunken tab.
+                pagerState.scrollToPage(SCHEDULE_PAGE)
+                backProgress.snapTo(0f)
+                backPreviewVisible = false
+            } else {
+                goToPage(SCHEDULE_PAGE)
+            }
+        } catch (cancelled: CancellationException) {
+            pageScope.launch {
+                backProgress.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow))
+                backPreviewVisible = false
+            }
+            throw cancelled
+        }
     }
     val saveableStateHolder = rememberSaveableStateHolder()
 
@@ -701,7 +778,8 @@ private fun HomeScreen(
                     refreshEnabled = !screenState.loading,
                     onCheckForUpdates = vm::checkForUpdates,
                     onLogout = vm::logout,
-                    studentName = vm.studentName
+                    studentName = vm.studentName,
+                    gpaTitle = gpaTitle
                 )
             },
             bottomBar = {
@@ -750,64 +828,99 @@ private fun HomeScreen(
                     )
                 }
 
-                HorizontalPager(
-                    state = pagerState,
-                    modifier = Modifier.weight(1f)
-                ) { page ->
-                    val pageState = vm.screenStateFor(page)
-                    // Keep each page's UI state (sub-tab, scroll, expanded rows,
-                    // filter) without holding every page in composition.
-                    saveableStateHolder.SaveableStateProvider(page) {
-                        when (page) {
-                            0 -> SchedulesScreen(
-                                vm.examSchedule,
-                                vm.weeklySchedule,
-                                scheduleFreshnessNote(
-                                    fetchedAtMillis = vm.weeklyScheduleUpdatedAt,
-                                    fromCache = vm.weeklyScheduleFromCache,
-                                    syncing = pageState.loading,
-                                    nowMillis = System.currentTimeMillis()
-                                ),
-                                pageState,
-                                onRetry = { vm.refresh(page) },
-                                onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) },
-                                manualPull = manualPulls[page],
-                                snackbarHostState = snackbarHostState,
-                                studentName = vm.studentName
-                            )
-                            1 -> AttendanceScreen(
-                                vm.attendance,
-                                vm.weeklySchedule?.entries,
-                                pageState,
-                                onRetry = { vm.refresh(page) },
-                                onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) },
-                                manualPull = manualPulls[page]
-                            )
-                            2 -> ResultScreen(
-                                vm.examResult,
-                                vm.studentName,
-                                pageState,
-                                onRetry = { vm.refresh(page) },
-                                onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) },
-                                manualPull = manualPulls[page]
-                            )
-                            3 -> TranscriptScreen(
-                                vm.transcript,
-                                vm.studentName,
-                                pageState,
-                                onRetry = { vm.refresh(page) },
-                                onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) },
-                                manualPull = manualPulls[page]
-                            )
-                            else -> VoucherScreen(
-                                vouchers = vm.vouchers,
-                                downloadingVoucherNumber = vm.downloadingVoucherNumber,
-                                screenState = pageState,
-                                onRetry = { vm.refresh(page) },
-                                onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) },
-                                manualPull = manualPulls[page],
-                                onDownload = { voucher -> vm.openVoucher(context, voucher) }
-                            )
+                Box(modifier = Modifier.weight(1f)) {
+                    // Live Schedule preview, composed only while a predictive
+                    // back swipe is in progress. Fresh UI state (no saveable
+                    // provider), so it can never clash with the real page 0.
+                    if (backPreviewVisible) {
+                        SchedulesScreen(
+                            vm.examSchedule,
+                            vm.weeklySchedule,
+                            null,
+                            vm.screenStateFor(SCHEDULE_PAGE),
+                            onRetry = {},
+                            onPullRefresh = {},
+                            manualPull = remember { ManualPull() },
+                            snackbarHostState = snackbarHostState,
+                            studentName = vm.studentName
+                        )
+                    }
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                val p = backProgress.value
+                                if (p > 0f) {
+                                    val scale = 1f - 0.1f * p
+                                    scaleX = scale
+                                    scaleY = scale
+                                    // Drift away from the edge the swipe started on.
+                                    translationX = (if (backFromLeftEdge) 1f else -1f) * 16.dp.toPx() * p
+                                    shape = RoundedCornerShape(28.dp)
+                                    clip = true
+                                }
+                            }
+                            // Opaque, so the preview only shows around the shrunken tab.
+                            .background(MaterialTheme.colorScheme.background)
+                    ) { page ->
+                        val pageState = vm.screenStateFor(page)
+                        // Keep each page's UI state (sub-tab, scroll, expanded rows,
+                        // filter) without holding every page in composition.
+                        saveableStateHolder.SaveableStateProvider(page) {
+                            when (page) {
+                                0 -> SchedulesScreen(
+                                    vm.examSchedule,
+                                    vm.weeklySchedule,
+                                    scheduleFreshnessNote(
+                                        fetchedAtMillis = vm.weeklyScheduleUpdatedAt,
+                                        fromCache = vm.weeklyScheduleFromCache,
+                                        syncing = pageState.loading,
+                                        nowMillis = System.currentTimeMillis()
+                                    ),
+                                    pageState,
+                                    onRetry = { vm.refresh(page) },
+                                    onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) },
+                                    manualPull = manualPulls[page],
+                                    snackbarHostState = snackbarHostState,
+                                    studentName = vm.studentName
+                                )
+                                1 -> AttendanceScreen(
+                                    vm.attendance,
+                                    vm.weeklySchedule?.entries,
+                                    pageState,
+                                    onRetry = { vm.refresh(page) },
+                                    onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) },
+                                    manualPull = manualPulls[page]
+                                )
+                                2 -> ResultScreen(
+                                    vm.examResult,
+                                    vm.studentName,
+                                    pageState,
+                                    onRetry = { vm.refresh(page) },
+                                    onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) },
+                                    manualPull = manualPulls[page],
+                                    listState = resultsListState
+                                )
+                                3 -> TranscriptScreen(
+                                    vm.transcript,
+                                    vm.studentName,
+                                    pageState,
+                                    onRetry = { vm.refresh(page) },
+                                    onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) },
+                                    manualPull = manualPulls[page],
+                                    listState = transcriptListState
+                                )
+                                else -> VoucherScreen(
+                                    vouchers = vm.vouchers,
+                                    downloadingVoucherNumber = vm.downloadingVoucherNumber,
+                                    screenState = pageState,
+                                    onRetry = { vm.refresh(page) },
+                                    onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) },
+                                    manualPull = manualPulls[page],
+                                    onDownload = { voucher -> vm.openVoucher(context, voucher) }
+                                )
+                            }
                         }
                     }
                 }
@@ -951,7 +1064,7 @@ private fun FloatingNavCapsule(
     showLabels: Boolean,
     darkTheme: Boolean
 ) {
-    val haptic = LocalHapticFeedback.current
+    val haptics = rememberAppHaptics()
     val containerColor = MaterialTheme.colorScheme.surface.copy(alpha = CAPSULE_FILL_ALPHA)
     // Dark mode needs a light rim: `surface` is already near-black there, so a
     // dark stroke would be invisible. Light mode needs a dark rim for the same
@@ -1081,7 +1194,7 @@ private fun FloatingNavCapsule(
                             // The tap itself always reaches the pager so a tap
                             // during an animation can still redirect it.
                             if (index != selectedIndex) {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptics.tick()
                             }
                             onSelect(index)
                         },
@@ -1201,7 +1314,9 @@ private fun PortalTopBar(
     onRefresh: () -> Unit,
     refreshEnabled: Boolean,
     onCheckForUpdates: () -> Unit,
-    onLogout: () -> Unit
+    onLogout: () -> Unit,
+    /** Shown in place of the name while a GPA card is scrolled away; null = name. */
+    gpaTitle: String? = null
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     // A second menu at the same anchor, opened from the overflow menu's
@@ -1220,18 +1335,39 @@ private fun PortalTopBar(
                     contentScale = ContentScale.Fit
                 )
                 Spacer(Modifier.width(AppSpacing.Md))
-                Column {
-                    Text(
-                        text = studentName?.let { formatStudentName(it) } ?: "MyIULMS",
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        "MyIULMS • Unofficial",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                // Name and subtitle normally; the GPA once the tab's GPA card
+                // has scrolled away. A plain cross-fade in the same spot: no
+                // movement, and the bar's height never changes.
+                AnimatedContent(
+                    targetState = gpaTitle,
+                    transitionSpec = { fadeIn(tween(220, delayMillis = 60)) togetherWith fadeOut(tween(160)) },
+                    contentAlignment = Alignment.CenterStart,
+                    label = "topBarTitle"
+                ) { title ->
+                    if (title == null) {
+                        Column {
+                            Text(
+                                text = studentName?.let { formatStudentName(it) } ?: "MyIULMS",
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                "MyIULMS • Unofficial",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                        )
+                    }
                 }
             }
         },
@@ -1469,7 +1605,8 @@ private fun ResultScreen(
     screenState: ScreenLoadState,
     onRetry: () -> Unit,
     onPullRefresh: () -> Unit,
-    manualPull: ManualPull
+    manualPull: ManualPull,
+    listState: LazyListState
 ) {
     if (result == null) {
         LoadStateContent("Loading latest result…", screenState, onRetry)
@@ -1484,13 +1621,14 @@ private fun ResultScreen(
     val aGrades = result.rows.count { it.grade.trim().uppercase().startsWith("A") }
 
     // Data-present branch only: `loading` here always means a refresh, never the first load.
-    PullToRefreshBox(
+    MyIulmsPullToRefresh(
         isRefreshing = manualPull.isRefreshing(screenState.loading),
         onRefresh = { manualPull.pulled = true; onPullRefresh() },
         modifier = Modifier.fillMaxSize()
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
+            state = listState,
             contentPadding = PaddingValues(
                 start = ListGutter,
                 top = AppSpacing.Md,
@@ -1692,7 +1830,7 @@ private fun ExamScheduleContent(
     }
 
     // Data-present branch only: `loading` here always means a refresh, never the first load.
-    PullToRefreshBox(
+    MyIulmsPullToRefresh(
         isRefreshing = manualPull.isRefreshing(screenState.loading),
         onRefresh = { manualPull.pulled = true; onPullRefresh() },
         modifier = Modifier.fillMaxSize()
@@ -1892,7 +2030,7 @@ private fun WeeklyScheduleContent(
         FreshnessLine(freshnessNote)
 
         // Data-present branch only: `loading` here always means a refresh, never the first load.
-        PullToRefreshBox(
+        MyIulmsPullToRefresh(
             isRefreshing = manualPull.isRefreshing(screenState.loading),
             onRefresh = { manualPull.pulled = true; onPullRefresh() },
             modifier = Modifier.fillMaxWidth()
@@ -2585,7 +2723,7 @@ private fun AttendanceScreen(
     if (showLimitsInfo) AbsenceLimitsInfoDialog(onDismiss = { showLimitsInfo = false })
 
     // Data-present branch only: `loading` here always means a refresh, never the first load.
-    PullToRefreshBox(
+    MyIulmsPullToRefresh(
         isRefreshing = manualPull.isRefreshing(screenState.loading),
         onRefresh = { manualPull.pulled = true; onPullRefresh() },
         modifier = Modifier.fillMaxSize()
@@ -2672,43 +2810,65 @@ private fun AttendanceCourseCard(course: AttendanceCourse, risk: AttendanceRisk)
                         )
                     }
                 }
+                // One chevron, turned 180° on a spring instead of swapping
+                // icons. Read in graphicsLayer: the turn only redraws.
+                val arrowRotation by animateFloatAsState(
+                    targetValue = if (expanded) 180f else 0f,
+                    animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow),
+                    label = "attendanceArrow"
+                )
                 Icon(
-                    imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    imageVector = Icons.Rounded.ExpandMore,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.graphicsLayer { rotationZ = arrowRotation }
                 )
             }
             AttendanceRiskChip(risk)
             AttendanceStatsRow(course, risk)
-            if (expanded) {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
-                if (course.faculty.isNotBlank()) InfoLine(Icons.Rounded.Person, "Faculty", course.faculty)
-                if (course.schedule.isNotBlank()) {
-                    InfoLine(Icons.Rounded.Schedule, "Schedule", formatTime12Hour(course.schedule))
-                }
-                if (course.sessions.isEmpty()) {
-                    Text(
-                        text = "No individual session records are available.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    course.sessions.forEach { session ->
-                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Text(
-                                text = "Lecture ${session.lectureNumber.ifBlank { "—" }}",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Medium
-                            )
-                            Text(
-                                text = session.values.mapIndexed { index, value ->
-                                    val label = course.sessionHeaders.getOrNull(index)
-                                        ?: "Session ${index + 1}"
-                                    "$label: ${value.ifBlank { "—" }}"
-                                }.joinToString("  ·  "),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+            // Session details grow and fade in from the stats row, and shrink
+            // back on collapse, instead of popping in.
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(
+                    animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow),
+                    expandFrom = Alignment.Top
+                ) + fadeIn(tween(180, delayMillis = 60)),
+                exit = shrinkVertically(
+                    animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
+                    shrinkTowards = Alignment.Top
+                ) + fadeOut(tween(120))
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.Sm)) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+                    if (course.faculty.isNotBlank()) InfoLine(Icons.Rounded.Person, "Faculty", course.faculty)
+                    if (course.schedule.isNotBlank()) {
+                        InfoLine(Icons.Rounded.Schedule, "Schedule", formatTime12Hour(course.schedule))
+                    }
+                    if (course.sessions.isEmpty()) {
+                        Text(
+                            text = "No individual session records are available.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        course.sessions.forEach { session ->
+                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(
+                                    text = "Lecture ${session.lectureNumber.ifBlank { "—" }}",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = session.values.mapIndexed { index, value ->
+                                        val label = course.sessionHeaders.getOrNull(index)
+                                            ?: "Session ${index + 1}"
+                                        "$label: ${value.ifBlank { "—" }}"
+                                    }.joinToString("  ·  "),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
@@ -2987,7 +3147,7 @@ private fun VoucherScreen(
     val totalOutstanding = vouchers.sumOf { parseRupees(it.amount) }
 
     // Data-present branch only: `loading` here always means a refresh, never the first load.
-    PullToRefreshBox(
+    MyIulmsPullToRefresh(
         isRefreshing = manualPull.isRefreshing(screenState.loading),
         onRefresh = { manualPull.pulled = true; onPullRefresh() },
         modifier = Modifier.fillMaxSize()
@@ -3142,7 +3302,8 @@ private fun TranscriptScreen(
     screenState: ScreenLoadState,
     onRetry: () -> Unit,
     onPullRefresh: () -> Unit,
-    manualPull: ManualPull
+    manualPull: ManualPull,
+    listState: LazyListState
 ) {
     if (transcript == null) {
         LoadStateContent("Loading transcript…", screenState, onRetry)
@@ -3153,6 +3314,21 @@ private fun TranscriptScreen(
     val shareScope = rememberCoroutineScope()
     val completed = remember(transcript) { completedHours(transcript.courses) }
     val remaining = remember(transcript) { remainingHours(transcript.courses) }
+
+    // Degree bar reveal, held at screen level (not inside the LazyColumn item)
+    // so scrolling the card away and back never replays it. It replays when
+    // the tab is opened again (the screen is recreated) and after every
+    // finished refresh (the generation below bumps).
+    var refreshGeneration by remember { mutableIntStateOf(0) }
+    var wasLoading by remember { mutableStateOf(screenState.loading) }
+    LaunchedEffect(screenState.loading) {
+        if (wasLoading && !screenState.loading) refreshGeneration++
+        wasLoading = screenState.loading
+    }
+    val degreeProgress = rememberRevealedProgress(
+        target = (completed.toFloat() / DEGREE_TOTAL_CREDIT_HOURS).coerceIn(0f, 1f),
+        replayKey = refreshGeneration
+    )
     val aGrades = transcript.courses.count { it.grade.trim().uppercase().startsWith("A") }
     val filterOptions = remember(transcript) { transcriptFilterOptions(transcript.courses) }
     var gradeFilter by rememberSaveable(transcript) { mutableStateOf(TRANSCRIPT_FILTER_ALL) }
@@ -3163,13 +3339,14 @@ private fun TranscriptScreen(
     val visibleCourses = remember(transcript, activeFilter) { filterTranscript(transcript.courses, activeFilter) }
 
     // Data-present branch only: `loading` here always means a refresh, never the first load.
-    PullToRefreshBox(
+    MyIulmsPullToRefresh(
         isRefreshing = manualPull.isRefreshing(screenState.loading),
         onRefresh = { manualPull.pulled = true; onPullRefresh() },
         modifier = Modifier.fillMaxSize()
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
+            state = listState,
             contentPadding = PaddingValues(
                 start = ListGutter,
                 top = AppSpacing.Md,
@@ -3218,7 +3395,7 @@ private fun TranscriptScreen(
             }
 
             item {
-                CreditProgressCard(completed = completed, remaining = remaining)
+                CreditProgressCard(completed = completed, remaining = remaining, animatedProgress = degreeProgress)
             }
 
             item {
@@ -3292,7 +3469,7 @@ private fun TranscriptScreen(
 }
 
 @Composable
-private fun CreditProgressCard(completed: Int, remaining: Int) {
+private fun CreditProgressCard(completed: Int, remaining: Int, animatedProgress: () -> Float) {
     val progress = (completed.toFloat() / DEGREE_TOTAL_CREDIT_HOURS).coerceIn(0f, 1f)
     val percent = (progress * 100).roundToInt()
 
@@ -3333,7 +3510,7 @@ private fun CreditProgressCard(completed: Int, remaining: Int) {
             // far right. StrokeCap.Round (library default) keeps the ends soft
             // without an outer clip, so the bar stays a clean straight rail.
             LinearProgressIndicator(
-                progress = { progress },
+                progress = animatedProgress,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(4.dp),
@@ -3430,10 +3607,11 @@ private fun HeroMetricCard(
     label: String,
     value: String,
     helper: String,
-    icon: ImageVector
+    icon: ImageVector,
+    modifier: Modifier = Modifier
 ) {
     Card(
-        Modifier.fillMaxWidth(),
+        modifier.fillMaxWidth(),
         shape = RoundedCornerShape(AppRadius.Hero),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
     ) {
@@ -3932,7 +4110,7 @@ private fun LoadStateContent(
     LaunchedEffect(state.loading) {
         if (!state.loading) manualPull.pulled = false
     }
-    PullToRefreshBox(
+    MyIulmsPullToRefresh(
         isRefreshing = manualPull.isRefreshing(state.loading),
         onRefresh = { manualPull.pulled = true; onRetry() },
         modifier = Modifier.fillMaxSize()
