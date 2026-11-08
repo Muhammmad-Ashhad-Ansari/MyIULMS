@@ -37,12 +37,6 @@ private val NotifyingStages = setOf(ScheduleEventType.Reminder, ScheduleEventTyp
  */
 private const val STAGE_GRACE_MILLIS = 10 * MINUTE_MILLIS
 
-/** How late a reminder notification may still be posted after its intended time.
- * An inexact alarm may arrive late; this grace window allows it to still notify
- * the student before or at class start rather than silently dropping it.
- */
-private const val REMINDER_GRACE_MILLIS = 15 * MINUTE_MILLIS
-
 enum class ScheduleEventType {
     /** The chosen lead time before a class (default [DEFAULT_REMINDER_LEAD_MINUTES]). */
     Reminder,
@@ -135,9 +129,14 @@ fun nextScheduleEvent(
 /**
  * Class notifications to post now: reminder and start stages that happened after
  * [handledUntilMillis] (the last time the receiver ran) and up to [nowMillis].
- * A class end is never included. A reminder is only posted before its class
- * starts, a start only within [STAGE_GRACE_MILLIS], so a late or delayed alarm
- * never announces something long past.
+ * A class end is never included. A start posts only within [STAGE_GRACE_MILLIS],
+ * so a delayed alarm never announces something long past.
+ *
+ * A late reminder (e.g. an inexact alarm when exact-alarm access is denied)
+ * still posts for as long as its class has not started. Once the class has
+ * started it is dropped: the start notification supersedes it, and posting both
+ * would show "class in N mins" alongside or after "class started" under the
+ * same notification id.
  */
 fun dueNotifications(
     entries: List<WeeklyScheduleEntry>,
@@ -150,7 +149,7 @@ fun dueNotifications(
         val occurrence = event.occurrence ?: return@filter false
         event.type in NotifyingStages &&
             event.atMillis in (handledUntilMillis + 1)..nowMillis && when (event.type) {
-            ScheduleEventType.Reminder -> nowMillis < occurrence.startMillis + REMINDER_GRACE_MILLIS
+            ScheduleEventType.Reminder -> nowMillis < occurrence.startMillis
             else -> nowMillis - event.atMillis <= STAGE_GRACE_MILLIS
         }
     }

@@ -135,6 +135,19 @@ class ScheduleEventsTest {
         assertEquals(listOf(ScheduleEventType.ClassStart), due.map { it.type })
     }
 
+    @Test
+    fun `a late reminder still posts while its class has not started`() {
+        // Reminder was due at 11:25; an inexact alarm arrives at 11:34.
+        val due = dueNotifications(week, monday(11, 34), handledUntilMillis = monday(11, 0))
+        assertEquals(listOf(ScheduleEventType.Reminder), due.map { it.type })
+    }
+
+    @Test
+    fun `a reminder arriving exactly at class start yields only the start`() {
+        val due = dueNotifications(week, monday(11, 35), handledUntilMillis = monday(11, 0))
+        assertEquals(listOf(ScheduleEventType.ClassStart), due.map { it.type })
+    }
+
     // ---- end-of-class text ----
 
     private fun monday(index: Int) = classOccurrences(week, monday(0, 0)).filter {
