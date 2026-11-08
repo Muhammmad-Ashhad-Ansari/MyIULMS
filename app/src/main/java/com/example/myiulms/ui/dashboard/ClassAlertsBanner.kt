@@ -58,7 +58,15 @@ import kotlinx.coroutines.launch
  * launcher's pin dialog, outside the app.
  */
 @Composable
-fun ScheduleTips(modifier: Modifier = Modifier) {
+fun ScheduleTips(
+    modifier: Modifier = Modifier,
+    // The predictive-back preview keeps this banner on screen for the life of
+    // the screen instead of only during a gesture, so it must not run the
+    // banner's side effects a second time: with interactive = false it skips
+    // the resume observer (which re-arms the class alarm) and reads its state
+    // once, at composition. Only the visible content is mirrored.
+    interactive: Boolean = true
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val remindersOn by ReminderSettings.enabled(context).collectAsState()
@@ -66,7 +74,8 @@ fun ScheduleTips(modifier: Modifier = Modifier) {
     var resumeTick by remember { mutableIntStateOf(0) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner, interactive) {
+        if (!interactive) return@DisposableEffect onDispose { }
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 resumeTick++

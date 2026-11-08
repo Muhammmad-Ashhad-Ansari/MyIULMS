@@ -2,6 +2,7 @@ package com.example.myiulms.alarms
 
 import android.content.BroadcastReceiver
 import android.content.Context
+import android.util.Log
 import android.content.Intent
 import androidx.glance.appwidget.updateAll
 import com.example.myiulms.appContainer
@@ -29,6 +30,8 @@ class WidgetUpdateReceiver : BroadcastReceiver() {
         scope.launch {
             try {
                 handle(app)
+            } catch (e: Exception) {
+                Log.w("ClassAlerts", "WidgetUpdateReceiver.handle failed", e)
             } finally {
                 pending.finish()
             }
@@ -36,11 +39,33 @@ class WidgetUpdateReceiver : BroadcastReceiver() {
     }
 
     private suspend fun handle(context: Context) {
-        runCatching {
-            NextClassRefresh.ticks.update { it + 1 }
-            NextClassWidget().updateAll(context)
+        // Tick the refresh count first; this never throws.
+        NextClassRefresh.ticks.update { it + 1 }
+        NextClassWidget().updateAll(context)
+
+        // Post notifications that are due — guard each step so a single failure
+        // never silently kills the rest.
+        if (!ReminderSettings.isEnabled(context)) {
+            Log.d("ClassAlerts", "Reminders disabled, skipping postDueNotifications")
+        } else {
+            val signedIn = NextClassWidgetSession.signedIn(context).value
+            if (!signedIn) {
+                Log.d("ClassAlerts", "User not signed in, skipping postDueNotifications")
+            } else {
+                val entries = context.appContainer.portal.cachedWeeklySchedule()?.payload?.entries
+                if (entries == null) {
+                    Log.d("ClassAlerts", "No cached weekly schedule entries, skipping postDueNotifications")
+                } else {
+                    val now = System.currentTimeMillis()
+                    val handledUntil = ReminderSettings.handledUntil(context)
+                    val lead = ReminderSettings.leadMinutes(context)
+                    dueNotifications(entries, now, handledUntil, lead)
+                        .forEach { ClassReminderNotifier.show(context, it, now) }
+                    ReminderSettings.setHandledUntil(context, now)
+                }
+            }
         }
-        runCatching { postDueNotifications(context) }
+
         WidgetAlarmScheduler.reschedule(context)
     }
 

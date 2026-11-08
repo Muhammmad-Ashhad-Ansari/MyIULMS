@@ -37,6 +37,12 @@ private val NotifyingStages = setOf(ScheduleEventType.Reminder, ScheduleEventTyp
  */
 private const val STAGE_GRACE_MILLIS = 10 * MINUTE_MILLIS
 
+/** How late a reminder notification may still be posted after its intended time.
+ * An inexact alarm may arrive late; this grace window allows it to still notify
+ * the student before or at class start rather than silently dropping it.
+ */
+private const val REMINDER_GRACE_MILLIS = 15 * MINUTE_MILLIS
+
 enum class ScheduleEventType {
     /** The chosen lead time before a class (default [DEFAULT_REMINDER_LEAD_MINUTES]). */
     Reminder,
@@ -144,7 +150,7 @@ fun dueNotifications(
         val occurrence = event.occurrence ?: return@filter false
         event.type in NotifyingStages &&
             event.atMillis in (handledUntilMillis + 1)..nowMillis && when (event.type) {
-            ScheduleEventType.Reminder -> nowMillis < occurrence.startMillis
+            ScheduleEventType.Reminder -> nowMillis < occurrence.startMillis + REMINDER_GRACE_MILLIS
             else -> nowMillis - event.atMillis <= STAGE_GRACE_MILLIS
         }
     }
