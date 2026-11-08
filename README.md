@@ -11,7 +11,7 @@
 <p align="center">
   <img alt="Release v1.2.0" src="https://img.shields.io/badge/Release-v1.2.0-3fb950?style=for-the-badge">
   <img alt="Target SDK 37" src="https://img.shields.io/badge/Target%20SDK-Android%2037-3DDC84?style=for-the-badge&logo=android&logoColor=white">
-  <img alt="74 unit tests passing" src="https://img.shields.io/badge/Unit%20Tests-74%20passing-3fb950?style=for-the-badge">
+  <img alt="200 unit tests passing" src="https://img.shields.io/badge/Unit%20Tests-200%20passing-3fb950?style=for-the-badge">
   <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/blob/main/LICENSE">
     <img alt="MIT License" src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge">
   </a>
@@ -49,6 +49,21 @@ MyIULMS is a focused companion for common student tasks. The university portal r
 
 ---
 
+## Sign in knowing where your login goes
+
+The most common reason students hesitate is the password field: *where does my IULMS password go?* The sign-in screen answers that on the screen itself, before you type anything.
+
+- **Straight to the university.** Your registration number and password are sent over HTTPS directly to `iulms.edu.pk`, exactly as a browser would. MyIULMS has no server, no student database, no analytics and no tracking.
+- **Said once, plainly.** A single chip, *Direct to iulms.edu.pk, no middle server*, sits above the form. Tap it for a four-step explanation of the sign-in flow and a link to the [interactive guide](https://muhammmad-ashhad-ansari.github.io/MyIULMS/).
+- **Opt-in storage.** *Remember me* is off by default. Turned on, your login is kept encrypted on this phone only; turned off, it is not saved.
+- **Honest branding.** The screen uses the MyIULMS icon, not the university's crest, and states that the app is unofficial and not affiliated with Iqra University.
+
+The wording deliberately says the login *is* transmitted, to `iulms.edu.pk` and nowhere else, rather than "never leaves your phone". The full, source-checked account is in [Trust and privacy](#trust-and-privacy).
+
+> The redesigned sign-in screen is on `main` and will ship in the next release; the v1.2.0 APK above still has the previous screen.
+
+---
+
 ## Core modules
 
 | Module | What you get |
@@ -58,8 +73,23 @@ MyIULMS is a focused companion for common student tasks. The university portal r
 | **Result** | Course marks, totals, grades, grade points, semester GPA, and academic insights |
 | **Transcript** | CGPA, courses, credit hours, grades, GPA values, and degree progress |
 | **Vouchers** | Fee amounts, due dates, due/overdue indicators, save or print as PDF |
+| **Class reminders** | Optional notification before each class (5, 10 or 15 minutes, your choice) and at class start, built on the phone from the cached schedule |
+| **Home-screen widget** | Your next class at a glance, from the encrypted offline schedule (Remember me on) |
 
 Across every module: **sign in with session recovery**, **password-manager support**, **shareable images**, and **light/dark themes** with a saved preference.
+
+---
+
+## Design system
+
+The interface is built entirely in Jetpack Compose on Material 3, with the app's own light and dark colour schemes rather than wallpaper-derived colours.
+
+- **Tokens, not one-off values.** Spacing (4 to 32dp on a 4-point grid) and corner radii come from shared tokens in `ui/theme/UiTokens.kt`, so cards, fields and buttons line up across screens.
+- **One accent.** Brand blue is the only accent colour: primary buttons, links, focus states and toggles. Primary buttons keep their full brand colour with `onPrimary` text in both themes.
+- **Readable by default.** Text colours on the sign-in screen are chosen to stay at or above WCAG AA (4.5:1) for small text; secondary text is never faded below that to look "quieter".
+- **Keyboard-aware layouts.** The sign-in screen scrolls rather than squeezing, keeps the *Sign in* button visible above the keyboard, and compacts its header while you type.
+- **Considered motion and feedback.** Short staggered entrances, a subtle press scale with haptic feedback on the primary action, branded pull-to-refresh, and Android predictive back.
+- **Accessible controls.** 48dp touch targets for icon buttons, labelled icons, and on the sign-in screen a full-row *Remember me* toggle that screen readers announce as a switch.
 
 ---
 
@@ -128,7 +158,7 @@ Output: `app/build/outputs/apk/debug/app-debug.apk`
 .\gradlew.bat testDebugUnitTest --rerun-tasks
 ```
 
-74 unit tests covering schedule interval maths, day-index arithmetic, sticky-header highlight selection, portal parsing, and transcript analytics.
+200 JVM unit tests covering schedule interval maths, day-index arithmetic, sticky-header highlight selection, class-reminder timing, portal and exam-schedule parsing, course-evaluation parsing, transcript analytics, attendance risk, the widget's next-class state, the encrypted cache envelope, and share-text formatting.
 
 ---
 
@@ -140,20 +170,34 @@ MyIULMS/
 │   ├── src/main/
 │   │   ├── java/com/example/myiulms/
 │   │   │   ├── Iulms.kt                 # Portal client, models, parsers, secure store
-│   │   │   ├── MainActivity.kt          # Compose UI, navigation, share triggers
+│   │   │   ├── MainActivity.kt          # App shell: tabs, navigation, module screens, share triggers
 │   │   │   ├── MainViewModel.kt         # Authentication and screen state
+│   │   │   ├── AppContainer.kt          # Shared, lazily created dependencies
+│   │   │   ├── PortalFormat.kt          # Display formats for portal dates and amounts
 │   │   │   ├── TranscriptAnalytics.kt   # Transcript and credit-hour calculations
 │   │   │   ├── ShareAcademic.kt         # Shareable result, transcript and schedule images
 │   │   │   ├── VoucherDownload.kt       # Voucher PDF saving and rendering
 │   │   │   ├── VoucherPrintActivity.kt  # Voucher preview and print screen
+│   │   │   ├── Evaluation*.kt           # Course-evaluation forms when the portal requires them
+│   │   │   ├── UpdateChecker.kt         # Public GitHub release check
+│   │   │   ├── alarms/                  # Class-reminder timing, notifications, alarm chain
+│   │   │   ├── data/                    # Encrypted offline schedule cache and repository
+│   │   │   ├── domain/attendance/       # Attendance-risk rules
 │   │   │   └── ui/
-│   │   │       ├── theme/               # Colours, typography, spacing and radius tokens
-│   │   │       ├── dashboard/           # Countdown card and schedule interval logic
-│   │   │       └── policy/              # Grading and scholarship reference sheet
+│   │   │       ├── login/               # Sign-in screen and "how sign-in works" sheet
+│   │   │       ├── components/          # Shared controls: haptics, menu, pull-to-refresh
+│   │   │       ├── dashboard/           # Countdown card, schedule interval logic, alerts banner
+│   │   │       ├── widget/              # Next-class home-screen widget (Glance)
+│   │   │       ├── policy/              # Grading and scholarship reference sheet
+│   │   │       └── theme/               # Colours, typography, spacing and radius tokens
 │   │   ├── res/                         # Android resources
 │   │   └── AndroidManifest.xml
+│   ├── src/test/                        # JVM unit tests
 │   └── build.gradle.kts
-├── docs/images/                         # App icon and architecture diagram
+├── docs/
+│   ├── images/                          # App icon and architecture diagram
+│   └── student-trust-and-community-faq.md
+├── output/myiulms-data-flow-figure/     # Interactive sign-in guide, published to GitHub Pages
 ├── gradle/                              # Gradle version catalog and wrapper config
 ├── build.gradle.kts
 └── settings.gradle.kts
@@ -168,11 +212,13 @@ MyIULMS/
 | Language | Kotlin 2.2.10 |
 | Android UI | Jetpack Compose (BOM 2026.02.01), Material 3 |
 | State | Android ViewModel and Compose state |
+| Home-screen widget | Jetpack Glance 1.2 |
 | Networking | OkHttp 4.12 |
 | HTML parsing | Jsoup 1.17 |
 | JSON parsing | `org.json` |
-| Async work | Kotlin Coroutines |
-| Credential storage | AndroidX Security Crypto |
+| Async work | Kotlin Coroutines 1.8 |
+| Credential storage | AndroidX Security Crypto 1.1 (`EncryptedSharedPreferences`) |
+| Offline schedule cache | AES-256-GCM with an Android Keystore key |
 | Minimum Android | 8.0 (API 26) |
 | Target SDK | Android API 37 |
 
