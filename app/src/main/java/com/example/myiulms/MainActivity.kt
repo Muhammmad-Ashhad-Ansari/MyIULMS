@@ -81,6 +81,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -93,6 +94,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.contentType
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -134,6 +136,7 @@ import com.example.myiulms.ui.components.InfoIconButton
 import com.example.myiulms.ui.components.MyIulmsDropdownMenu
 import com.example.myiulms.ui.components.MyIulmsPullToRefresh
 import com.example.myiulms.ui.components.rememberAppHaptics
+import com.example.myiulms.ui.login.LoginScreen
 import com.example.myiulms.ui.components.rememberRevealedProgress
 import com.example.myiulms.ui.components.MyIulmsDropdownMenuDivider
 import com.example.myiulms.ui.components.MyIulmsDropdownMenuHeader
@@ -310,271 +313,6 @@ fun App(
                 }
             }
         )
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun LoginScreen(
-    vm: MainViewModel,
-    darkTheme: Boolean,
-    onThemeToggle: () -> Unit,
-    onCheckForUpdates: () -> Unit
-) {
-    var user by remember(vm.savedUser) { mutableStateOf(vm.savedUser.orEmpty()) }
-    var pass by remember(vm.savedPassword) { mutableStateOf(vm.savedPassword.orEmpty()) }
-    var rememberPassword by remember { mutableStateOf(vm.savedPassword != null) }
-    var showPassword by remember { mutableStateOf(false) }
-    val keyboard = LocalSoftwareKeyboardController.current
-
-    // Read in composition so the footer recomposes on the keyboard transition
-    // rather than drifting with the window resize.
-    //
-    // No `.value`: in foundation-layout 1.10.4 `isImeVisible` is a @Composable
-    // getter on WindowInsets.Companion returning Boolean directly. It was a
-    // State<Boolean> in older releases, so `.value` compiles against the wrong
-    // overload set here.
-    val isKeyboardVisible = WindowInsets.isImeVisible
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .systemBarsPadding()
-            .imePadding()
-    ) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 24.dp, top = 32.dp, end = 24.dp, bottom = 64.dp),
-            verticalArrangement = Arrangement.Center
-        ) {
-            item {
-                Text(
-                    text = "MyIULMS",
-                    style = MaterialTheme.typography.displaySmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = "Unofficial student client for IULMS",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Spacer(Modifier.height(28.dp))
-
-                Text(
-                    "Welcome back",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(Modifier.height(7.dp))
-                Text(
-                    "Your student portal, made simple.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Spacer(Modifier.height(24.dp))
-
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(AppRadius.Hero),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-                ) {
-                    Column(Modifier.padding(20.dp)) {
-                        OutlinedTextField(
-                            value = user,
-                            onValueChange = { user = it.filter(Char::isDigit) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .semantics { contentType = ContentType.Username },
-                            label = { Text("Registration number") },
-                            leadingIcon = { Icon(Icons.Rounded.Badge, null) },
-                            singleLine = true,
-                            shape = RoundedCornerShape(AppRadius.Medium),
-                            keyboardOptions = KeyboardOptions(
-                                keyboardType = KeyboardType.Number,
-                                imeAction = ImeAction.Next
-                            )
-                        )
-
-                        Spacer(Modifier.height(14.dp))
-
-                        OutlinedTextField(
-                            value = pass,
-                            onValueChange = { pass = it },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .semantics { contentType = ContentType.Password },
-                            label = { Text("Password") },
-                            leadingIcon = { Icon(Icons.Rounded.Lock, null) },
-                            trailingIcon = {
-                                IconButton(onClick = { showPassword = !showPassword }) {
-                                    Icon(
-                                        if (showPassword) Icons.Rounded.VisibilityOff
-                                        else Icons.Rounded.Visibility,
-                                        contentDescription = if (showPassword) "Hide password" else "Show password"
-                                    )
-                                }
-                            },
-                            singleLine = true,
-                            shape = RoundedCornerShape(AppRadius.Medium),
-                            keyboardOptions = KeyboardOptions(
-                                keyboardType = KeyboardType.Password,
-                                imeAction = ImeAction.Done
-                            ),
-                            visualTransformation = if (showPassword) {
-                                VisualTransformation.None
-                            } else {
-                                PasswordVisualTransformation()
-                            },
-                            keyboardActions = KeyboardActions(
-                                onDone = {
-                                    keyboard?.hide()
-                                    if (!vm.loading && user.isNotBlank() && pass.isNotBlank()) {
-                                        vm.login(user.trim(), pass, rememberPassword)
-                                    }
-                                }
-                            )
-                        )
-
-                        Spacer(Modifier.height(12.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Checkbox(
-                                checked = rememberPassword,
-                                onCheckedChange = { rememberPassword = it }
-                            )
-                            Column(Modifier.weight(1f)) {
-                                Text("Remember me", style = MaterialTheme.typography.labelLarge)
-                                Text(
-                                    "Keep my login encrypted on this device",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-
-                        vm.errorMsg?.let { message ->
-                            Spacer(Modifier.height(8.dp))
-                            Surface(
-                                modifier = Modifier.semantics {
-                                    liveRegion = LiveRegionMode.Assertive
-                                },
-                                color = MaterialTheme.colorScheme.errorContainer,
-                                shape = RoundedCornerShape(AppRadius.Medium)
-                            ) {
-                                Row(
-                                    Modifier.padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(Icons.Rounded.ErrorOutline, null)
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(message, style = MaterialTheme.typography.bodyMedium)
-                                }
-                            }
-                        }
-
-                        Spacer(Modifier.height(18.dp))
-
-                        Button(
-                            onClick = {
-                                keyboard?.hide()
-                                vm.login(user.trim(), pass, rememberPassword)
-                            },
-                            enabled = !vm.loading && user.isNotBlank() && pass.isNotBlank(),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 52.dp),
-                            shape = RoundedCornerShape(AppRadius.Medium)
-                        ) {
-                            if (vm.loading) {
-                                CircularProgressIndicator(
-                                    Modifier.size(20.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onPrimary
-                                )
-                            } else {
-                                Icon(Icons.AutoMirrored.Rounded.Login, null)
-                                Spacer(Modifier.width(8.dp))
-                                Text("Sign in")
-                            }
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    "Unofficial student app · Not affiliated with Iqra University",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp),
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        // Anchored to the bottom of the window, and removed entirely while the
-        // keyboard is up. The root Box carries `.imePadding()` and the activity
-        // is `adjustResize`, so the box's bottom edge tracks the keyboard: the
-        // footer used to ride up with it and land directly on top of the
-        // password field. Gating on IME visibility is cleaner than an animation
-        // here -- there is nothing to animate to, the row should not exist.
-        if (!isKeyboardVisible) {
-            Text(
-                text = "by Not_Einstein",
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = AppSpacing.Md),
-                textAlign = TextAlign.Center,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-        Row(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(AppSpacing.Sm)
-        ) {
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 3.dp,
-                shadowElevation = 2.dp
-            ) {
-                IconButton(onClick = onCheckForUpdates) {
-                    Icon(
-                        Icons.Rounded.Update,
-                        contentDescription = "Check for updates",
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 3.dp,
-                shadowElevation = 2.dp
-            ) {
-                IconButton(onClick = onThemeToggle) {
-                    Icon(
-                        imageVector = if (darkTheme) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
-                        contentDescription = if (darkTheme) "Switch to light theme" else "Switch to dark theme",
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-        }
     }
 }
 
@@ -837,22 +575,55 @@ private fun HomeScreen(
                 }
 
                 Box(modifier = Modifier.weight(1f)) {
-                    // Live Schedule preview, composed only while a predictive
-                    // back swipe is in progress. Fresh UI state (no saveable
-                    // provider), so it can never clash with the real page 0.
-                    if (backPreviewVisible) {
-                        SchedulesScreen(
-                            vm.examSchedule,
-                            vm.weeklySchedule,
-                            null,
-                            vm.screenStateFor(SCHEDULE_PAGE),
-                            onRetry = {},
-                            onPullRefresh = {},
-                            manualPull = remember { ManualPull() },
-                            snackbarHostState = snackbarHostState,
-                            studentName = vm.studentName
-                        )
+                    // Live Schedule preview, revealed behind the shrunken tab
+                    // while a predictive back swipe is in progress. Fresh UI
+                    // state (no saveable provider), so it can never clash with
+                    // the real page 0.
+                    //
+                    // It is composed once and stays composed: the first back
+                    // event used to mount a whole screen on the render thread,
+                    // which is exactly the frame that dropped. Now that frame
+                    // only flips a draw flag (read below in the draw phase) and
+                    // the pager's layer. While hidden, drawWithContent skips
+                    // every child draw, so idle frames pay no overdraw.
+                    var previewWarming by remember { mutableStateOf(true) }
+                    // Exactly one drawn frame per data change. While the flag is
+                    // up the preview records its display lists behind the opaque
+                    // pager; the flag drops again before the next draw, so idle
+                    // frames never pay for it. Keyed on the Schedule data (and
+                    // its refresh state) because a hidden screen that never draws
+                    // would otherwise go stale and charge the first gesture for
+                    // the re-record. Two frame awaits, not one: the flag is only
+                    // cleared on the *second* frame callback, which guarantees a
+                    // draw already happened with it up.
+                    LaunchedEffect(
+                        vm.examSchedule,
+                        vm.weeklySchedule,
+                        vm.studentName,
+                        vm.screenStateFor(SCHEDULE_PAGE).loading
+                    ) {
+                        previewWarming = true
+                        withFrameNanos { }
+                        withFrameNanos { }
+                        previewWarming = false
                     }
+                    SchedulesScreen(
+                        vm.examSchedule,
+                        vm.weeklySchedule,
+                        null,
+                        vm.screenStateFor(SCHEDULE_PAGE),
+                        onRetry = {},
+                        onPullRefresh = {},
+                        manualPull = remember { ManualPull() },
+                        snackbarHostState = snackbarHostState,
+                        studentName = vm.studentName,
+                        preview = true,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .drawWithContent {
+                                if (backPreviewVisible || previewWarming) drawContent()
+                            }
+                    )
                     HorizontalPager(
                         state = pagerState,
                         modifier = Modifier
@@ -887,6 +658,7 @@ private fun HomeScreen(
                                         nowMillis = System.currentTimeMillis()
                                     ),
                                     pageState,
+                                    modifier = Modifier.fillMaxSize(),
                                     onRetry = { vm.refresh(page) },
                                     onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) },
                                     manualPull = manualPulls[page],
@@ -1767,12 +1539,16 @@ private fun SchedulesScreen(
     onPullRefresh: () -> Unit,
     manualPull: ManualPull,
     snackbarHostState: SnackbarHostState,
-    studentName: String?
+    studentName: String?,
+    modifier: Modifier = Modifier,
+    // True for the predictive-back mirror behind the pager: content only, no
+    // second set of side effects (see ScheduleTips.interactive).
+    preview: Boolean = false
 ) {
     var selectedSubTab by rememberSaveable { mutableIntStateOf(0) }
     val subTabStateHolder = rememberSaveableStateHolder()
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(modifier = modifier) {
         SingleChoiceSegmentedButtonRow(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1794,7 +1570,10 @@ private fun SchedulesScreen(
             }
         }
 
-        ScheduleTips(modifier = Modifier.padding(horizontal = 18.dp, vertical = AppSpacing.Xs))
+        ScheduleTips(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = AppSpacing.Xs),
+            interactive = !preview
+        )
 
         Box(modifier = Modifier.weight(1f)) {
             if (selectedSubTab == 0) {
