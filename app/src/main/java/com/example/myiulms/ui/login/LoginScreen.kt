@@ -336,7 +336,7 @@ fun LoginScreen(
                 )
                 Spacer(Modifier.height(16.dp))
                 FooterText(
-                    "Unofficial, not affiliated with Iqra University.",
+                    "Unofficial, not affiliated with Iqra University. Sign-in goes to iulms.edu.pk only.",
                     modifier = Modifier.entrance(5, entered)
                 )
                 Spacer(Modifier.height(8.dp))
@@ -456,10 +456,14 @@ private fun BrandHeader(
 /** The single trust marker. Taps open [HowItWorksSheet]. */
 @Composable
 private fun TrustChip(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val haptics = rememberAppHaptics()
     val colors = MaterialTheme.colorScheme
     val dark = isDarkSurface()
     Surface(
-        onClick = onClick,
+        onClick = {
+            haptics.confirm()
+            onClick()
+        },
         modifier = modifier,
         shape = CircleShape,
         // A solid (opaque) tonal tint of the brand blue over the page, edged
@@ -478,7 +482,7 @@ private fun TrustChip(onClick: () -> Unit, modifier: Modifier = Modifier) {
             Icon(Icons.Outlined.Shield, contentDescription = null, modifier = Modifier.size(15.dp))
             Spacer(Modifier.width(6.dp))
             Text(
-                "Direct to iulms.edu.pk, no middle server",
+                "Direct to iulms.edu.pk, no middle server or database",
                 color = colors.primary,
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Medium
