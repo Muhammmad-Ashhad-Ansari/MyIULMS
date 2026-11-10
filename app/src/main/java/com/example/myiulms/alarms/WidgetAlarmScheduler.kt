@@ -94,8 +94,7 @@ object WidgetAlarmScheduler {
         return PendingIntent.getBroadcast(
             app,
             99,  // distinct request code for safety-net
-            Intent(app, WidgetUpdateReceiver::class.java).setAction(ACTION_SCHEDULE_TICK)
-                .addFlags(PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT),
+            Intent(app, WidgetUpdateReceiver::class.java).setAction(ACTION_SCHEDULE_TICK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
     }

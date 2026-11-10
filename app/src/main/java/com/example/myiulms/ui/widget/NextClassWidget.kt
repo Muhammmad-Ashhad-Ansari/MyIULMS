@@ -1,5 +1,6 @@
 package com.example.myiulms.ui.widget
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -122,6 +123,7 @@ private fun widgetColors(): androidx.glance.color.ColorProviders =
 // Translucent wallpaper-neutral scrim (res/color*/widget_scrim.xml, ~60%), so
 // the widget blends with the wallpaper but text keeps a readable base. Below
 // Android 12 cornerRadius has no effect, so a tinted drawable gives the shape.
+@SuppressLint("RestrictedApi") // Glance's only resource-backed color factory is library-restricted.
 private fun GlanceModifier.translucentSurface(): GlanceModifier {
     val scrim = ColorProvider(R.color.widget_scrim)
     return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
