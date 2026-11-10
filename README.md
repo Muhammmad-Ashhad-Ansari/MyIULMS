@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="Release v1.2.0" src="https://img.shields.io/badge/Release-v1.2.0-3fb950?style=for-the-badge">
+  <img alt="Release v1.3.0" src="https://img.shields.io/badge/Release-v1.3.0-3fb950?style=for-the-badge">
   <img alt="Target SDK 37" src="https://img.shields.io/badge/Target%20SDK-Android%2037-3DDC84?style=for-the-badge&logo=android&logoColor=white">
   <img alt="200 unit tests passing" src="https://img.shields.io/badge/Unit%20Tests-200%20passing-3fb950?style=for-the-badge">
   <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/blob/main/LICENSE">
@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/tag/v1.2.0"><strong>⬇ Download v1.2.0 APK</strong></a>
+  <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/tag/v1.3.0"><strong>⬇ Download v1.3.0 APK</strong></a>
   ·
   <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/issues">Report an issue</a>
 </p>
@@ -60,7 +60,7 @@ The most common reason students hesitate is the password field: *where does my I
 
 The wording deliberately says the login *is* transmitted, to `iulms.edu.pk` and nowhere else, rather than "never leaves your phone". The full, source-checked account is in [Trust and privacy](#trust-and-privacy).
 
-> The redesigned sign-in screen is on `main` and will ship in the next release; the v1.2.0 APK above still has the previous screen.
+> The redesigned sign-in screen, including the trust chip and the direct-destination explanation, ships in v1.3.0.
 
 ---
 
