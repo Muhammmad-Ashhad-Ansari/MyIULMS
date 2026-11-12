@@ -1,5 +1,6 @@
 package com.example.myiulms.ui.login
 
+import android.webkit.WebView
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
@@ -47,6 +48,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Badge
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Shield
@@ -85,6 +87,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -110,9 +113,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import com.example.myiulms.IULMS_LOGIN_URL
 import com.example.myiulms.MainViewModel
+import com.example.myiulms.PortalChallengeSolver
 import com.example.myiulms.R
 import com.example.myiulms.ui.components.rememberAppHaptics
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -302,6 +309,29 @@ fun LoginScreen(
                 modifier = Modifier.entrance(4, entered)
             )
 
+            // Transparent status: Cloudflare "browser verification" chal rahi
+            // hai — yeh sign-in failure nahi hai, isliye error colour nahi.
+            if (vm.portalVerifying && vm.loading) {
+                Spacer(Modifier.height(8.dp))
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { liveRegion = LiveRegionMode.Polite },
+                    color = colors.primaryContainer,
+                    contentColor = colors.onPrimaryContainer,
+                    shape = ControlShape
+                ) {
+                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Shield, null, Modifier.size(20.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            "Portal requires browser verification. This only takes a moment.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+            }
+
             vm.errorMsg?.let { message ->
                 Spacer(Modifier.height(8.dp))
                 Surface(
@@ -353,6 +383,23 @@ fun LoginScreen(
 
     if (showHowItWorks) {
         HowItWorksSheet(onDismiss = { showHowItWorks = false })
+    }
+
+}
+
+/**
+ * Interactive Cloudflare check (silent solve na hui to): portal ki apni page
+ * WebView mein; naya cf_clearance aate hi khud band ho jati hai. App ke root
+ * par host hoti hai, taake mid-session challenge par bhi (jab student home par
+ * ho, sign-in screen composition mein hi na ho) sheet dikh sake.
+ */
+@Composable
+internal fun PortalVerificationHost(vm: MainViewModel) {
+    if (vm.portalVerificationSheet) {
+        PortalVerificationSheet(
+            onResume = { vm.resumePortalVerification() },
+            onCancel = { vm.cancelPortalVerification() }
+        )
     }
 }
 
@@ -476,16 +523,24 @@ private fun TrustChip(onClick: () -> Unit, modifier: Modifier = Modifier) {
         Row(
             modifier = Modifier
                 .heightIn(min = 32.dp)
-                .padding(start = 10.dp, end = 12.dp),
+                .padding(start = 12.dp, end = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Outlined.Shield, contentDescription = null, modifier = Modifier.size(15.dp))
+            Icon(Icons.Outlined.Shield, contentDescription = null, modifier = Modifier.size(14.dp))
             Spacer(Modifier.width(6.dp))
             Text(
-                "Direct to iulms.edu.pk, no middle server or database",
+                // Short by design: the chip has to stay one clean line on the
+                // 360dp-wide phones (and again at large font scales), where the
+                // old sentence wrapped mid-phrase. The "no middle server" part
+                // lives one tap away in HowItWorksSheet.
+                "Direct HTTPS to iulms.edu.pk",
                 color = colors.primary,
                 style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Medium,
+                // One line always. At extreme font scales it trims with an
+                // ellipsis instead of folding into a second line.
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -719,6 +774,242 @@ private fun DeveloperCredit(modifier: Modifier = Modifier) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
+    }
+}
+
+/**
+ * Interactive Cloudflare check: the portal's own login page inside a WebView,
+ * hosted in a Material sheet (same pattern as [HowItWorksSheet]).
+ *
+ * Auto-closes the moment the check completes — a new `cf_clearance`, or an
+ * already-valid clearance with the challenge page gone ([PortalChallengeSolver
+ * .isSolveComplete]) — and resumes the pending sign-in. "Continue to sign in"
+ * appears once cleared (fallback if the poll misses), "Cancel" is always
+ * available and never reports invalid credentials.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PortalVerificationSheet(
+    onResume: () -> Unit,
+    onCancel: () -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+    var webView by remember { mutableStateOf<WebView?>(null) }
+    // Snapshot at open: only a *changed* clearance (or a challenge-free page)
+    // counts as success — a stale value must not close the sheet instantly.
+    val seenClearance = remember { PortalChallengeSolver.clearanceValue() }
+    var cleared by remember { mutableStateOf(false) }
+
+    val finish: (Boolean) -> Unit = { resume ->
+        scope.launch { sheetState.hide() }.invokeOnCompletion {
+            if (!sheetState.isVisible) {
+                if (resume) onResume() else onCancel()
+            }
+        }
+    }
+
+    LaunchedEffect(webView) {
+        val view = webView ?: return@LaunchedEffect
+        while (true) {
+            delay(400)
+            if (PortalChallengeSolver.isSolveComplete(view, seenClearance)) {
+                PortalChallengeSolver.persistCookies()
+                cleared = true
+                finish(true)
+                return@LaunchedEffect
+            }
+        }
+    }
+
+    // sheetGesturesEnabled = false: sheet ka drag aur nested-scroll dono WebView
+    // ke drags ko chhina karte the — Turnstile scroll/tap nahi ho paata tha.
+    // Ab WebView apne andar khud scroll karta hai; sheet sirf Cancel / back /
+    // scrim tap par band hoti hai (drag-to-dismiss bilkul nahi).
+    ModalBottomSheet(
+        onDismissRequest = { finish(cleared) },
+        sheetState = sheetState,
+        sheetGesturesEnabled = false,
+        dragHandle = null
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(start = Gutter, end = Gutter, top = 12.dp, bottom = 12.dp)
+        ) {
+            // Badge + two-line title block, the same lockup language as the
+            // rest of the app: a tonal circle carries the icon so the heading
+            // is never just floating text.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    shape = CircleShape,
+                    color = colors.primaryContainer,
+                    contentColor = colors.onPrimaryContainer
+                ) {
+                    Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Outlined.Shield,
+                            contentDescription = null,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Portal verification",
+                        modifier = Modifier.semantics { heading() },
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        "iulms.edu.pk · direct connection",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.onSurfaceVariant
+                    )
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            Text(
+                "The portal is checking that this is a real browser. Finish the " +
+                    "check below — it runs on the portal's own page and the app " +
+                    "carries on automatically.",
+                style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 21.sp),
+                color = colors.onSurfaceVariant
+            )
+            Spacer(Modifier.height(14.dp))
+            // The WebView is a page, not app chrome: one framed card with the
+            // same 16dp radius as the fields, a hairline outline so it reads as
+            // a surface in both themes, and the WebView's own background
+            // matched to the card so no white/grey seam shows while the page
+            // paints or during a refresh.
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = ControlShape,
+                color = colors.surfaceContainerLowest,
+                border = BorderStroke(1.dp, colors.outline.copy(alpha = 0.35f)),
+                shadowElevation = if (isDarkSurface()) 0.dp else 2.dp
+            ) {
+                AndroidView(
+                    factory = { context ->
+                        PortalChallengeSolver.createWebView(context).apply {
+                            setBackgroundColor(colors.surfaceContainerLowest.toArgb())
+                            webView = this
+                            loadUrl(IULMS_LOGIN_URL)
+                        }
+                    },
+                    onRelease = { it.destroy() },
+                    // 330dp kam se kam (chhota page), 440dp tak (Turnstile widget
+                    // clip na ho); WebView content se badi ho sakti hai — uske
+                    // andar ki scrolling sheet ab intercept nahi karti.
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 330.dp, max = 440.dp)
+                        .clip(ControlShape)
+                )
+            }
+            Spacer(Modifier.height(14.dp))
+            VerificationStatusCard(cleared)
+            Spacer(Modifier.height(10.dp))
+            if (cleared) {
+                Button(
+                    onClick = { finish(true) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(ControlHeight),
+                    shape = ControlShape
+                ) {
+                    Text(
+                        "Continue to sign in",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+            }
+            TextButton(
+                onClick = { finish(false) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp),
+                shape = ControlShape
+            ) {
+                Text(
+                    "Cancel",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Status strip under the WebView. A tonal card with a title and one line of
+ * guidance, not a bare spinner: the student can tell at a glance whether the
+ * check is still running or has finished, and the card is a polite live region
+ * so TalkBack announces the change without interrupting.
+ */
+@Composable
+private fun VerificationStatusCard(cleared: Boolean) {
+    val colors = MaterialTheme.colorScheme
+    val dark = isDarkSurface()
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { liveRegion = LiveRegionMode.Polite },
+        shape = ControlShape,
+        color = if (cleared) colors.tertiaryContainer else colors.surfaceContainerHigh,
+        contentColor = if (cleared) colors.onTertiaryContainer else colors.onSurface
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (cleared) {
+                Icon(
+                    Icons.Outlined.CheckCircle,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = colors.tertiary
+                )
+            } else {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp,
+                    color = colors.primary,
+                    trackColor = colors.primary.copy(alpha = if (dark) 0.28f else 0.14f)
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    if (cleared) "Verification complete" else "Waiting for the portal",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    if (cleared) {
+                        "You're verified — the app reopens the portal now."
+                    } else {
+                        "If a checkbox appears above, tap it to finish."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (cleared) {
+                        colors.onTertiaryContainer.copy(alpha = 0.8f)
+                    } else {
+                        colors.onSurfaceVariant
+                    }
+                )
+            }
+        }
     }
 }
 

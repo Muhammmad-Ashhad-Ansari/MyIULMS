@@ -110,6 +110,26 @@ class MainViewModel(
         private set
     var errorMsg by mutableStateOf<String?>(null)
         private set
+    /**
+     * Cloudflare "browser verification" chal rahi hai — yeh sign-in failure
+     * NAHI hai. Sirf sign-in ke dauran (loading) transparent status dikhata hai,
+     * taake student ko "check your registration number and password" na mile.
+     */
+    var portalVerifying by mutableStateOf(false)
+        private set
+    /**
+     * Interactive verification sheet (LoginScreen ka WebView ModalBottomSheet).
+     * Silent off-screen solve na ho sake to student portal par khud check
+     * karta hai; naya cf_clearance aate hi sheet khud band hoti hai.
+     */
+    var portalVerificationSheet by mutableStateOf(false)
+        private set
+    /** Sheet ke baad dobara chalane wala sign-in (main thread hi use karta hai). */
+    private var pendingVerification: PendingVerification? = null
+    // Mid-session challenge: kaun se tabs clearance reject hone se ruke. Sheet
+    // complete hone par sirf clearance import karke yehi tabs dobara load hote
+    // hain — remember-me off par bhi, jab relogin ke liye creds saved nahi hain.
+    private val challengedScreens = mutableSetOf<Int>()
     var lastUpdatedAt by mutableStateOf<Long?>(null)
         private set
     internal var updateCheckState by mutableStateOf<UpdateCheckState?>(null)
@@ -232,6 +252,13 @@ class MainViewModel(
         private set
 
     init {
+        // Cloudflare challenge (background thread) → transparent "verification"
+        // status, kabhi credentials error nahi. Sirf tab jab sign-in chal raha ho.
+        client.onChallengeDetected = {
+            viewModelScope.launch {
+                if (loading) portalVerifying = true
+            }
+        }
         // The encrypted store (EncryptedSharedPreferences + Android Keystore) is
         // opened here for the first time, which blocked the main thread for
         // ~85 ms of the first frame. It now runs on IO; the first frame draws at
@@ -245,6 +272,11 @@ class MainViewModel(
                 // screen, so a cached session opens straight onto it.
                 restoreSavedSchedule(saved.first)
                 launchTask { doLogin(saved.first, saved.second, true) }
+            } else {
+                // Remember me off (ya koi saved login nahi): process death ke baad
+                // widget ko signed-in nahi dikhna chahiye. Cache usi sign-in par
+                // wipe ho chuki thi, isliye yahan koi data expose nahi hota.
+                NextClassWidgetSession.onAuthChanged(getApplication(), false)
             }
             restoringSession = false
         }
@@ -287,10 +319,15 @@ class MainViewModel(
             } catch (e: NotLoggedInException) {
                 errorMsg = "Session expired. Please sign in again."
                 loggedIn = false
+            } catch (e: CloudflareChallengeException) {
+                // Portal verification pending — credentials failure NAHI.
+                // Saved credentials hon to sheet khulegi, warna transparent status.
+                handlePortalChallenge()
             } catch (e: Exception) {
                 errorMsg = e.toSignInErrorMessage()
             } finally {
                 loading = false
+                portalVerifying = false
             }
         }
     }
@@ -323,6 +360,24 @@ class MainViewModel(
                 errorMsg = message
                 loggedIn = false
                 updateScreenState(screen) { screenStateError(message) }
+            } catch (e: CloudflareChallengeException) {
+                // Portal verification, "check your connection" error NAHI.
+                // Mid-session challenge: sheet HAR haal mein khulti hai — remember-me
+                // off par creds saved nahi hote, par Moodle session abhi bhi valid
+                // hai; sirf nayi clearance chahiye (relogin client khud karta hai).
+                portalVerifying = false
+                challengedScreens += screen
+                val user = savedUser
+                val pass = savedPassword
+                pendingVerification = if (user != null && pass != null) {
+                    PendingVerification(user, pass, remember = true)
+                } else {
+                    null
+                }
+                portalVerificationSheet = true
+                updateScreenState(screen) {
+                    screenStateError("Portal requires browser verification. It will reload after the check.")
+                }
             } catch (_: Exception) {
                 val name = when (screen) {
                     0 -> "schedule"
@@ -344,24 +399,38 @@ class MainViewModel(
     }
 
     private suspend fun doLogin(user: String, pass: String, remember: Boolean) {
+        // Main thread: WebView ka asli UA pehle se resolve (cf_clearance usi par
+        // bound hoti hai) aur pichhla verification-status reset.
+        PortalUserAgent.ensureResolved(getApplication())
+        portalVerifying = false
         var gatedDuringHomeFetch = false
-        val loginResult = withContext(Dispatchers.IO) {
-            val ok = client.login(user, pass)
+        val loginResult = try {
+            withContext(Dispatchers.IO) {
+                val ok = client.login(user, pass)
 
-            if (!ok) {
-                Pair(false, null)
-            } else {
-                try {
-                    val homeHtml = client.getHtml("/")
-                    Pair(true, parseStudentIdentity(homeHtml))
-                } catch (e: EvaluationRequiredException) {
-                    // Login kaamyab lekin home par gate redirect: yahan rokna zaroori
-                    // hai, warna neeche ka remember-me save aur loggedIn=true chhut
-                    // jate. Naam gate ke baad onEvaluationReturned() se wapas aata hai.
-                    gatedDuringHomeFetch = true
-                    Pair(true, null)
+                if (!ok) {
+                    Pair(false, null)
+                } else {
+                    try {
+                        val homeHtml = client.getHtml("/")
+                        Pair(true, parseStudentIdentity(homeHtml))
+                    } catch (e: EvaluationRequiredException) {
+                        // Login kaamyab lekin home par gate redirect: yahan rokna zaroori
+                        // hai, warna neeche ka remember-me save aur loggedIn=true chhut
+                        // jate. Naam gate ke baad onEvaluationReturned() se wapas aata hai.
+                        gatedDuringHomeFetch = true
+                        Pair(true, null)
+                    }
                 }
             }
+        } catch (e: CloudflareChallengeException) {
+            // Silent solve naa hui — student WebView sheet mein khud verify
+            // karega. Yeh GALAT CREDENTIALS nahi hai, isliye yahan koi
+            // sign-in error message nahi.
+            portalVerifying = false
+            pendingVerification = PendingVerification(user, pass, remember)
+            portalVerificationSheet = true
+            return
         }
 
         if (gatedDuringHomeFetch) evaluationRequired = true
@@ -397,14 +466,91 @@ class MainViewModel(
         doLogin(user, pass, remember)
     }
 
+    /**
+     * Verification sheet band hui (naya cf_clearance mil gaya): pending
+     * sign-in dobara chalao — session wapas aa jata hai, student ko dobara
+     * form bharna nahi padta.
+     */
+    fun resumePortalVerification() {
+        portalVerificationSheet = false
+        val pending = pendingVerification
+        pendingVerification = null
+        val retryScreens = challengedScreens.toList()
+        challengedScreens.clear()
+        viewModelScope.launch {
+            if (pending != null) {
+                // Sheet ke WebView se cf_clearance jar mein — login() ise rakh bhi
+                // leta hai, warna GET / turant dobara challenge par jata.
+                withContext(Dispatchers.IO) { client.importWebViewCookies() }
+                launchTask {
+                    doLogin(pending.user, pending.pass, pending.remember)
+                    retryScreens.forEach { refresh(it, showRefreshFeedback = false) }
+                }
+            } else {
+                // Mid-session (remember-me off): Moodle session valid hai, sirf
+                // clearance reject hui thi. Sirf clearance import karo — sheet ke
+                // guest cookies se authenticated session replace na ho.
+                withContext(Dispatchers.IO) { client.importPersistedClearance() }
+                retryScreens.forEach { refresh(it, showRefreshFeedback = false) }
+            }
+        }
+    }
+
+    /** Student ne check cancel kiya — transparent status, kabhi credentials error. */
+    fun cancelPortalVerification() {
+        pendingVerification = null
+        challengedScreens.clear()
+        portalVerificationSheet = false
+        portalVerifying = false
+        errorMsg = if (showHome) {
+            "Verification was cancelled. Pull down to try again."
+        } else {
+            "Verification was cancelled. Tap Sign in to try again."
+        }
+    }
+
+    /**
+     * Cloudflare challenge silent solve par bhi nahi hui (background task se
+     * aayi): saved credentials par interactive sheet kholo, warna transparent
+     * status dikhao. Galat-credentials message kabhi nahi.
+     */
+    private fun handlePortalChallenge() {
+        portalVerifying = false
+        val user = savedUser
+        val pass = savedPassword
+        if (user != null && pass != null) {
+            pendingVerification = PendingVerification(user, pass, remember = true)
+            portalVerificationSheet = true
+        } else {
+            errorMsg = "The portal requires browser verification. Tap Sign in to try again."
+            loggedIn = false
+        }
+    }
+
+    /** Sheet ke baad dobara chalane wala sign-in. */
+    private data class PendingVerification(
+        val user: String,
+        val pass: String,
+        val remember: Boolean
+    )
+
     // Signing out ends the network session, but remembered credentials remain
     // encrypted on the device. Unchecking Remember me on a successful login
     // removes them.
     fun logout() {
         client.logout()
+        // WebView ke cookies (cf_clearance + Moodle session) bhi saaf — session
+        // hygiene: agla sign-in naye clearance se guzrega.
+        PortalChallengeSolver.clearCookies()
+        pendingVerification = null
+        portalVerificationSheet = false
+        portalVerifying = false
+        // Portal cache bhi: agla account kisi aur ka schedule na dekhe.
         portal.clear()
-        clearSessionState()
         errorMsg = null
+        // loggedIn-setter: offlineSession=false + clearSessionState() — stale
+        // schedule/attendance/transcript aur "last updated" sab gir jate hain,
+        // sessionJob cancel hota hai, widget ko sign-out pata chalta hai.
         loggedIn = false
     }
 
@@ -416,6 +562,8 @@ class MainViewModel(
     private fun clearSessionState() {
         sessionJob.cancel()
         sessionJob = SupervisorJob(viewModelScope.coroutineContext[Job])
+        challengedScreens.clear()
+        pendingVerification = null
         examResult = null
         examSchedule = null
         clearWeeklySchedule()
@@ -433,6 +581,8 @@ class MainViewModel(
         _studentIdentity.value = null
         resetStudentPhoto()
         evaluationRequired = false
+        // "Last updated" note bhi purane session ka na rahe (logout/expiry).
+        lastUpdatedAt = null
     }
 
     fun loadExamResult(showRefreshFeedback: Boolean = false) = launchScreenTask(2, showRefreshFeedback) {
@@ -651,6 +801,13 @@ class MainViewModel(
         photoJob?.cancel()
         photoJob = null
         _photoState.value = PhotoState.Idle
+    }
+
+    override fun onCleared() {
+        // Challenge-hook ab kisi ViewModel ka nahi — naya instance init mein
+        // dobara lagata hai (wrappers se reference leak nahi).
+        client.onChallengeDetected = null
+        super.onCleared()
     }
 }
 

@@ -10,9 +10,11 @@ import kotlinx.serialization.Serializable
 import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.FormBody
+import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
+import okhttp3.MediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -23,9 +25,6 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 const val BASE = "https://iulms.edu.pk"
-
-private const val UA =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 class NotLoggedInException : Exception("Your session has expired. Please sign in again.")
 
@@ -177,13 +176,7 @@ class SessionCookieJar : CookieJar {
     private val store = ConcurrentHashMap<String, MutableList<Cookie>>()
 
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
-        val list = store.getOrPut(url.host) { mutableListOf() }
-        synchronized(list) {
-            for (c in cookies) {
-                list.removeAll { it.name == c.name }
-                list.add(c)
-            }
-        }
+        merge(url.host, cookies)
     }
 
     override fun loadForRequest(url: HttpUrl): List<Cookie> {
@@ -195,22 +188,73 @@ class SessionCookieJar : CookieJar {
         }
     }
 
+    /**
+     * WebView (CookieManager) ke cookies jar mein. Sirf header mein aaye naam
+     * replace hote hain; Moodle ka session-pair aadha nahi badalta
+     * (PortalChallenge.withCoherentSessionPair — "cookies disabled" error
+     * galat-credentials jaisa dikhta hai, isliye pair atomic rakha jata hai).
+     */
+    fun importHeader(header: String, host: String) {
+        val incoming = withCoherentSessionPair(
+            parseCookieHeader(header, host),
+            existingNames(host)
+        )
+        if (incoming.isNotEmpty()) merge(host, incoming)
+    }
+
+    private fun existingNames(host: String): Set<String> {
+        val list = store[host] ?: return emptySet()
+        synchronized(list) { return list.mapTo(HashSet()) { it.name } }
+    }
+
+    private fun merge(host: String, cookies: List<Cookie>) {
+        val list = store.getOrPut(host) { mutableListOf() }
+        synchronized(list) {
+            for (c in cookies) {
+                list.removeAll { it.name == c.name }
+                list.add(c)
+            }
+        }
+    }
+
     fun clear() {
         store.clear()
+    }
+
+    /**
+     * Sirf session cookies (Moodle pair) hatao; cf_clearance rehne do — login()
+     * har dafa chalti hai aur valid clearance ke bina har sign-in dobara
+     * Cloudflare challenge se guzregi. Logout [clear] use karta hai (poora).
+     */
+    fun clearExceptClearance() {
+        for (list in store.values) {
+            synchronized(list) { list.removeAll { it.name != CF_CLEARANCE_COOKIE } }
+        }
+    }
+
+    /** Cold start par sirf persisted cf_clearance — Moodle pair login() khud banata hai. */
+    fun importClearance(header: String, host: String) {
+        val clearance = parseCookieHeader(header, host).filter { it.name == CF_CLEARANCE_COOKIE }
+        if (clearance.isNotEmpty()) merge(host, clearance)
     }
 }
 
 // Server browser jaisi headers na mile to Access Denied deta hai, isliye har request pe lagti hain
-private val headerInterceptor = Interceptor { chain ->
-    val original = chain.request()
+// User-Agent PortalUserAgent.shared() se aata hai — WebView wahi bhejti hai,
+// taake cf_clearance (us par bound) dono taraf maany rahe.
+internal fun withPortalHeaders(original: Request): Request {
     val builder = original.newBuilder()
-        .header("User-Agent", UA)
+        .header("User-Agent", PortalUserAgent.shared())
         .header("Accept-Language", "en-US,en;q=0.9")
         .header("Connection", "keep-alive")
     if (original.header("Accept") == null) {
         builder.header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
     }
-    chain.proceed(builder.build())
+    return builder.build()
+}
+
+private val headerInterceptor = Interceptor { chain ->
+    chain.proceed(withPortalHeaders(chain.request()))
 }
 
 // ---------------- Evaluation gate detection ----------------
@@ -253,6 +297,28 @@ class IulmsClient {
     @Volatile
     private var creds: Pair<String, String>? = null
 
+    // Do tabs ek saath challenge/expiry par pahunch sakte hain: ek hi WebView
+    // solve aur ek hi login chalna chahiye, warna parallel dialogs aur aapas
+    // mein Moodle session clear karne wali login storm banti hai.
+    private val challengeGate = SingleFlightGate()
+    private val loginGate = SingleFlightGate()
+
+    /**
+     * Cloudflare challenge clear karne ka hook (AppContainer attach karta hai).
+     * Background thread par call hota hai; null = koi solver nahi, to challenge
+     * hamesha CloudflareChallengeException ban jata hai (kabhi galat-credentials
+     * nahi).
+     */
+    @Volatile
+    var challengeSolver: ChallengeSolver? = null
+
+    /**
+     * Challenge milne par ek baar (background thread) — UI "browser
+     * verification" wala transparent status dikha sake. Credentials error nahi.
+     */
+    @Volatile
+    var onChallengeDetected: (() -> Unit)? = null
+
     // Process death ke baad shared client khaali hota hai (koi login nahi hua) —
     // EvaluationActivity is se pehchanta hai ke remembered creds se login karna hai.
     val hasCredentials: Boolean get() = creds != null
@@ -260,18 +326,92 @@ class IulmsClient {
     // Logged in page mein hamesha Logout link hota hai
     private fun isLoggedIn(html: String) = html.contains("login/logout.php")
 
-    fun login(username: String, password: String): Boolean {
-        jar.clear()
-        // Pehle homepage se session cookie lo
-        http.newCall(Request.Builder().url("$BASE/").build()).execute().close()
+    /** Ek portal exchange (redirects ke baad) — binary body bhi mehfooz. */
+    private data class PortalExchange(
+        val status: Int,
+        val headers: Headers,
+        val bytes: ByteArray,
+        val finalUrl: String,
+        val contentType: MediaType?
+    ) {
+        val body: String
+            get() = bytes.toString(contentType?.charset(Charsets.UTF_8) ?: Charsets.UTF_8)
+    }
+
+    private fun call(request: Request): PortalExchange =
+        http.newCall(request).execute().use { response ->
+            val contentType = response.body?.contentType()
+            val bytes = response.body?.bytes() ?: ByteArray(0)
+            PortalExchange(
+                status = response.code,
+                headers = response.headers,
+                bytes = bytes,
+                finalUrl = response.request.url.toString(),
+                contentType = contentType
+            )
+        }
+
+    /**
+     * Ek exchange; agar portal Cloudflare challenge de to WebView solver se
+     * clearance lekar ek baar dobara. Challenge KABHI normal page ya
+     * credentials-failure ki tarah return nahi hota — solve na ho to
+     * CloudflareChallengeException.
+     *
+     * Challenge ke baad naya Moodle test-cookie pair bhi banao: GET / dono
+     * cookies ek saath set karta hai, warna aadha pair Moodle ko "cookies not
+     * enabled" error deta hai (jo galat-credentials jaisa dikhta hai).
+     */
+    private fun execute(request: Request): PortalExchange {
+        // Snapshot BEFORE the request: agar is request ke lautne tak kisi doosre
+        // thread ne clearance solve kar li, dobara WebView chalane ki zaroorat
+        // nahi — bas naye cookies ke saath retry karo.
+        val observedSolve = challengeGate.completedCount()
+        val first = call(request)
+        if (!isCloudflareChallenge(first.status, first.headers, first.body)) return first
+
+        onChallengeDetected?.invoke()
+        val solved = challengeGate.reuseOrRun(observedSolve) {
+            val cookies = challengeSolver?.solve(SILENT_SOLVE_TIMEOUT_MS)
+                ?: return@reuseOrRun false
+            jar.importHeader(cookies, BASE.toHttpUrl().host)
+            true
+        }
+        if (!solved) throw CloudflareChallengeException()
+
+        if (request.url.encodedPath != "/") {
+            val home = call(Request.Builder().url("$BASE/").build())
+            if (isCloudflareChallenge(home.status, home.headers, home.body)) {
+                throw CloudflareChallengeException()
+            }
+        }
+
+        val retry = call(request)
+        if (isCloudflareChallenge(retry.status, retry.headers, retry.body)) {
+            throw CloudflareChallengeException()
+        }
+        return retry
+    }
+
+    fun login(username: String, password: String): Boolean =
+        loginGate.run { loginInternal(username, password) }
+
+    private fun loginInternal(username: String, password: String): Boolean {
+        // Purana Moodle session hatao lekin cf_clearance rakho: clearance WebView
+        // ne earn ki thi aur woh abhi bhi valid hai (restart/interactive resume) —
+        // uske bina GET / dobara challenge par jata. Stale clearance ho to GET /
+        // challenge deta hai aur solver naya clearance le aata hai (yani yahan
+        // rakhna safe hai).
+        jar.clearExceptClearance()
+        // Pehle homepage se session cookie lo (challenge aaye to execute khud solve karega)
+        execute(Request.Builder().url("$BASE/").build())
 
         val form = FormBody.Builder()
             .add("username", username)
             .add("password", password)
             .add("testcookies", "1")
             .build()
-        val req = Request.Builder().url("$BASE/login/index.php").post(form).build()
-        val html = http.newCall(req).execute().use { it.body?.string().orEmpty() }
+        val req = Request.Builder().url(IULMS_LOGIN_URL).post(form).build()
+        val html = execute(req).body
 
         val ok = isLoggedIn(html)
         creds = if (ok) username to password else null
@@ -283,9 +423,36 @@ class IulmsClient {
         creds = null
     }
 
+    /**
+     * Interactive sheet (WebView) ke cookies jar mein — sirf cf_clearance
+     * asli zaroorat hai (resume ke baad login() wahi rakhta hai, warna GET /
+     * dobara challenge par jata). Moodle pair GET / waise bhi naya bana leta hai.
+     */
+    fun importWebViewCookies() {
+        val header = PortalChallengeSolver.cookieHeader() ?: return
+        jar.importHeader(header, BASE.toHttpUrl().host)
+    }
+
+    /**
+     * Cold start: WebView ke disk par persisted cf_clearance ko jar mein le lo,
+     * taake pehla GET / challenge par na jaye (clearance UA + IP se bandhi hai,
+     * wahi UA dono taraf lagti hai). Sirf clearance — Moodle session pair
+     * login() khud naya banata hai, isliye stale session import nahi hota.
+     */
+    fun importPersistedClearance() {
+        val value = PortalChallengeSolver.clearanceValue() ?: return
+        jar.importClearance("$CF_CLEARANCE_COOKIE=$value", BASE.toHttpUrl().host)
+    }
+
     private fun relogin() {
         val c = creds ?: throw NotLoggedInException()
-        if (!login(c.first, c.second)) throw NotLoggedInException()
+        // Ek hi re-login: jo thread pehle aa gaya wohi login karta hai, baaki
+        // usi ke fresh session par apni request retry karte hain (yeh doosri
+        // login se Moodle session clear nahi hota).
+        val observed = loginGate.completedCount()
+        if (!loginGate.reuseOrRun(observed) { loginInternal(c.first, c.second) }) {
+            throw NotLoggedInException()
+        }
     }
 
     // Session expire ho jaye to khud dobara login karke retry karta hai.
@@ -294,10 +461,8 @@ class IulmsClient {
     // chala jata (silent empty screens).
     private fun getPortalPage(path: String): PortalPage {
         repeat(2) {
-            val response = http.newCall(Request.Builder().url(BASE + path).build()).execute()
-            val page = response.use { r ->
-                PortalPage(finalUrl = r.request.url.toString(), html = r.body?.string().orEmpty())
-            }
+            val exchange = execute(Request.Builder().url(BASE + path).build())
+            val page = PortalPage(finalUrl = exchange.finalUrl, html = exchange.body)
             if (isEvaluationGate(page.finalUrl, page.html)) throw EvaluationRequiredException()
             if (isLoggedIn(page.html)) return page
             relogin()
@@ -319,16 +484,13 @@ class IulmsClient {
                 .header("Accept", "application/json, text/javascript, */*; q=0.01")
                 .header("X-Requested-With", "XMLHttpRequest")
                 .build()
-            val text = http.newCall(req).execute().use { r ->
-                val body = r.body?.string().orEmpty()
-                // Gate active ho to JSON kabhi nahi aayega — beech ka relogin
-                // loop skip karke seedha gate state par jao.
-                if (isEvaluationGate(r.request.url.toString(), body)) {
-                    throw EvaluationRequiredException()
-                }
-                body
+            val exchange = execute(req)
+            // Gate active ho to JSON kabhi nahi aayega — beech ka relogin
+            // loop skip karke seedha gate state par jao.
+            if (isEvaluationGate(exchange.finalUrl, exchange.body)) {
+                throw EvaluationRequiredException()
             }
-            val clean = text.trimStart('\uFEFF').trim()
+            val clean = exchange.body.trimStart('\uFEFF').trim()
             if (clean.startsWith("{")) return clean
             relogin()
         }
@@ -354,10 +516,12 @@ class IulmsClient {
                 .header("Referer", "$BASE/sic/Vouchers.php")
                 .build()
 
-            val response = http.newCall(req).execute()
-            val contentType = response.body?.contentType()?.toString().orEmpty()
-            val finalUrl = response.request.url.toString()
-            val bytes = response.use { it.body?.bytes() ?: ByteArray(0) }
+            // Challenge ke baad solve/retry ho chuka hai — yahan ka bytes/
+            // contentType/ finalUrl wahi exchange se, HTML check neeche.
+            val exchange = execute(req)
+            val contentType = exchange.contentType?.toString().orEmpty()
+            val finalUrl = exchange.finalUrl
+            val bytes = exchange.bytes
 
             if (bytes.isEmpty()) {
                 throw IllegalStateException("IULMS returned an empty voucher")
@@ -398,11 +562,8 @@ class IulmsClient {
     private fun getEvaluationPage(url: String): String {
         val absolute = if (url.startsWith("http", ignoreCase = true)) url else BASE + url
         repeat(2) {
-            val response = http.newCall(Request.Builder().url(absolute).build()).execute()
-            val page = response.use { r ->
-                PortalPage(finalUrl = r.request.url.toString(), html = r.body?.string().orEmpty())
-            }
-            if (isLoggedIn(page.html)) return page.html
+            val exchange = execute(Request.Builder().url(absolute).build())
+            if (isLoggedIn(exchange.body)) return exchange.body
             relogin()
         }
         throw NotLoggedInException()
@@ -472,7 +633,7 @@ class IulmsClient {
                 .header("Accept", "text/html,application/xhtml+xml,*/*;q=0.8")
                 .header("Referer", formUrl)
                 .build()
-            val html = http.newCall(req).execute().use { it.body?.string().orEmpty() }
+            val html = execute(req).body
             // Session expire ho to POST login page par land karega.
             val looksLoggedOut =
                 html.contains("name=\"username\"", ignoreCase = true) &&

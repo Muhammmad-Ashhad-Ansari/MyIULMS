@@ -13,6 +13,12 @@ import com.example.myiulms.data.PortalRepository
  * alarm receiver on a background thread always get the same instance.
  */
 class AppContainer(app: Application) {
+    init {
+        // Cloudflare challenge ka WebView solver + ek hi User-Agent dono taraf
+        // (OkHttp + WebView) — client ke saath ek hi jagah se attach hota hai.
+        PortalChallengeSolver.attach(client, app)
+    }
+
     /** The logged-in OkHttp client (cookie jar + credentials for auto re-login). */
     val client: IulmsClient get() = IulmsSession.client
 
