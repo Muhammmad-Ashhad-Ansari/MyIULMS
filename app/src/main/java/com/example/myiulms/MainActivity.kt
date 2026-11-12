@@ -46,6 +46,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -82,12 +84,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -137,6 +144,7 @@ import com.example.myiulms.ui.components.MyIulmsDropdownMenu
 import com.example.myiulms.ui.components.MyIulmsPullToRefresh
 import com.example.myiulms.ui.components.rememberAppHaptics
 import com.example.myiulms.ui.login.LoginScreen
+import com.example.myiulms.ui.login.PortalVerificationHost
 import com.example.myiulms.ui.components.rememberRevealedProgress
 import com.example.myiulms.ui.components.MyIulmsDropdownMenuDivider
 import com.example.myiulms.ui.components.MyIulmsDropdownMenuHeader
@@ -291,6 +299,10 @@ fun App(
     } else {
         LoginScreen(vm, darkTheme, onThemeToggle, onCheckForUpdates = vm::checkForUpdates)
     }
+
+    // Root-level so it also covers a challenge that arrives mid-session, when
+    // the sign-in screen (its previous host) is not composed.
+    PortalVerificationHost(vm)
 
     // Trigger automatic update check after user enters a real portal/session
     LaunchedEffect(key1 = vm.loggedIn) {
@@ -865,6 +877,28 @@ private fun FloatingNavCapsule(
         }
     )
 
+    // Tap routing is anchored to the capsule, not to the item that happens to
+    // sit under the finger when it lifts. The selected pill's row weight springs
+    // on every selection change, so items slide sideways for a few hundred ms;
+    // a stationary finger can fall outside the moving node and the item's
+    // clickable then cancels its press — on slower frames this reads as "the
+    // tab needs two taps". The item's own click consumes its up when it
+    // succeeds; when it does not, the capsule resolves the destination from the
+    // down coordinates. Exactly one path fires per tap.
+    val rowCoords = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    val itemCoords = remember { arrayOfNulls<LayoutCoordinates>(NavDestinations.size) }
+    val selectedNow = rememberUpdatedState(selectedIndex)
+    val selectNow = rememberUpdatedState(onSelect)
+    val select: (Int) -> Unit = remember(haptics) {
+        { index ->
+            // Buzz only when the visible destination changes. The tap itself
+            // always reaches the pager so a tap during an animation can still
+            // redirect it.
+            if (index != selectedNow.value) haptics.tick()
+            selectNow.value(index)
+        }
+    }
+
     // The root container deliberately has no background: the fade below must
     // composite over the scrolling pager content so its transparent top
     // reveals the list and its lower portion fades to the theme background.
@@ -962,6 +996,48 @@ private fun FloatingNavCapsule(
             Row(
                 modifier = Modifier
                     .fillMaxSize()
+                    .onGloballyPositioned { rowCoords[0] = it }
+                    // Main pass: by the time the capsule sees an event, the
+                    // tapped item's own clickable has already had its chance.
+                    // If the press was cancelled mid-morph its up arrives
+                    // unconsumed, and this handler switches from the down
+                    // position so a single tap always lands.
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(
+                                requireUnconsumed = false,
+                                pass = PointerEventPass.Main
+                            )
+                            val target = navIndexAt(
+                                down.position,
+                                rowCoords[0],
+                                itemCoords
+                            )
+                            var tapCancelled = false
+                            var upConsumed = false
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Main)
+                                val change = event.changes
+                                    .firstOrNull { it.id == down.id } ?: break
+                                if (change.changedToUp()) {
+                                    upConsumed = change.isConsumed
+                                    break
+                                }
+                                if (!change.pressed) {
+                                    tapCancelled = true
+                                    break
+                                }
+                                if ((change.position - down.position).getDistance() >
+                                    viewConfiguration.touchSlop
+                                ) {
+                                    tapCancelled = true
+                                }
+                            }
+                            if (target != null && !tapCancelled && !upConsumed) {
+                                select(target)
+                            }
+                        }
+                    }
                     .padding(horizontal = CapsuleHorizontalPadding),
                 horizontalArrangement = Arrangement.spacedBy(CapsuleItemSpacing),
                 verticalAlignment = Alignment.CenterVertically
@@ -969,22 +1045,15 @@ private fun FloatingNavCapsule(
                 NavDestinations.forEachIndexed { index, destination ->
                     NavItem(
                         selected = index == selectedIndex,
-                        onClick = {
-                            // Buzz only when the visible destination changes.
-                            // The tap itself always reaches the pager so a tap
-                            // during an animation can still redirect it.
-                            if (index != selectedIndex) {
-                                haptics.tick()
-                            }
-                            onSelect(index)
-                        },
+                        onClick = { select(index) },
                         icon = destination.icon,
                         label = if (useCompactLabels) destination.compactLabel else destination.label,
                         // Accessibility always uses the full destination name.
                         // An abbreviated label like "Transcr." is announced
                         // verbatim by TalkBack, which is not what it means.
                         contentDescription = destination.accessibilityLabel,
-                        showLabel = showLabels
+                        showLabel = showLabels,
+                        onPositioned = { itemCoords[index] = it }
                     )
                 }
             }
@@ -1007,7 +1076,8 @@ private fun RowScope.NavItem(
     icon: ImageVector,
     label: String,
     contentDescription: String,
-    showLabel: Boolean
+    showLabel: Boolean,
+    onPositioned: (LayoutCoordinates) -> Unit
 ) {
     // Row weight animates between collapsed and expanded. Weight is a
     // parent-measured value, not a layout state, so this drives a re-measure of
@@ -1035,14 +1105,18 @@ private fun RowScope.NavItem(
             // the width budget. Animating it therefore re-measures the row each
             // frame rather than moving a GPU layer.
             .weight(weight)
-            .height(NavPillHeight)
+            // The target is the whole capsule column, not just the 48dp pill:
+            // taps on the 8dp band above or below a thumb-height icon used to
+            // be dropped. The pill is now a visual layer inside, so its morph
+            // cannot change the hit area's height either.
+            .fillMaxHeight()
             .clip(CircleShape)
-            .background(pillColor)
             .selectable(
                 selected = selected,
                 onClick = onClick,
                 role = Role.Tab
             )
+            .onGloballyPositioned(onPositioned)
             .semantics {
                 // The visible label is decorative here: it is inside an
                 // AnimatedVisibility whose node would otherwise be announced for
@@ -1053,6 +1127,15 @@ private fun RowScope.NavItem(
             },
         contentAlignment = Alignment.Center
     ) {
+        // Selection pill: fixed 48dp and full item width, drawn behind the
+        // icon row. Purely visual — no gesture handling lives here.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(NavPillHeight)
+                .clip(CircleShape)
+                .background(pillColor)
+        )
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(NavLabelGap)
@@ -1083,6 +1166,24 @@ private fun RowScope.NavItem(
             }
         }
     }
+}
+
+/**
+ * The destination whose measured slot contains [position], in the capsule
+ * row's local coordinates. Reads live layout coordinates, so it reflects what
+ * was under the finger at pointer-down even while the pill is mid-spring.
+ */
+private fun navIndexAt(
+    position: Offset,
+    row: LayoutCoordinates?,
+    items: Array<LayoutCoordinates?>
+): Int? {
+    if (row == null || !row.isAttached) return null
+    for (index in items.indices) {
+        val item = items[index]?.takeIf { it.isAttached } ?: continue
+        if (row.localBoundingBoxOf(item).contains(position)) return index
+    }
+    return null
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
