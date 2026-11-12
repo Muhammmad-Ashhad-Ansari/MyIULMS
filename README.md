@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  <img alt="Release v1.3.0" src="https://img.shields.io/badge/Release-v1.3.0-3fb950?style=for-the-badge">
+  <img alt="Release v1.3.1" src="https://img.shields.io/badge/Release-v1.3.1-3fb950?style=for-the-badge">
   <img alt="Target SDK 37" src="https://img.shields.io/badge/Target%20SDK-Android%2037-3DDC84?style=for-the-badge&logo=android&logoColor=white">
-  <img alt="200 unit tests passing" src="https://img.shields.io/badge/Unit%20Tests-200%20passing-3fb950?style=for-the-badge">
+  <img alt="223 unit tests passing" src="https://img.shields.io/badge/Unit%20Tests-223%20passing-3fb950?style=for-the-badge">
   <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/blob/main/LICENSE">
     <img alt="MIT License" src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge">
   </a>
@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/tag/v1.3.0"><strong>⬇ Download v1.3.0 APK</strong></a>
+  <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/tag/v1.3.1"><strong>⬇ Download v1.3.1 APK</strong></a>
   ·
   <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/issues">Report an issue</a>
 </p>
@@ -54,7 +54,7 @@ MyIULMS is a focused companion for common student tasks. The university portal r
 The most common reason students hesitate is the password field: *where does my IULMS password go?* The sign-in screen answers that on the screen itself, before you type anything.
 
 - **Straight to the university.** Your registration number and password are sent over HTTPS directly to `iulms.edu.pk`, exactly as a browser would. MyIULMS has no server, no student database, no analytics and no tracking.
-- **Said once, plainly.** A single chip, *Direct to iulms.edu.pk, no middle server*, sits above the form. Tap it for a four-step explanation of the sign-in flow and a link to the [interactive guide](https://muhammmad-ashhad-ansari.github.io/MyIULMS/).
+- **Said once, plainly.** A single chip, *Direct HTTPS to iulms.edu.pk*, sits above the form. Tap it for a four-step explanation of the sign-in flow and a link to the [interactive guide](https://muhammmad-ashhad-ansari.github.io/MyIULMS/).
 - **Opt-in storage.** *Remember me* is off by default. Turned on, your login is kept encrypted on this phone only; turned off, it is not saved.
 - **Honest branding.** The screen uses the MyIULMS icon, not the university's crest, and states that the app is unofficial and not affiliated with Iqra University.
 
@@ -158,7 +158,7 @@ Output: `app/build/outputs/apk/debug/app-debug.apk`
 .\gradlew.bat testDebugUnitTest --rerun-tasks
 ```
 
-200 JVM unit tests covering schedule interval maths, day-index arithmetic, sticky-header highlight selection, class-reminder timing, portal and exam-schedule parsing, course-evaluation parsing, transcript analytics, attendance risk, the widget's next-class state, the encrypted cache envelope, and share-text formatting.
+223 JVM unit tests across 24 suites covering schedule interval maths, day-index arithmetic, sticky-header highlight selection, class-reminder timing, portal and exam-schedule parsing, course-evaluation parsing, transcript analytics, attendance risk, the widget's next-class state, the encrypted cache envelope, share-text formatting, and the portal's Cloudflare challenge — detection, cookie bridging, session pairing, and single-flight serialization.
 
 ---
 
@@ -179,6 +179,8 @@ MyIULMS/
 │   │   │   ├── VoucherDownload.kt       # Voucher PDF saving and rendering
 │   │   │   ├── VoucherPrintActivity.kt  # Voucher preview and print screen
 │   │   │   ├── Evaluation*.kt           # Course-evaluation forms when the portal requires them
+│   │   │   ├── PortalChallenge.kt       # Cloudflare challenge detection, cookie bridge, one attempt at a time
+│   │   │   ├── PortalChallengeSolver.kt # Off-screen and interactive WebView verification
 │   │   │   ├── UpdateChecker.kt         # Public GitHub release check
 │   │   │   ├── alarms/                  # Class-reminder timing, notifications, alarm chain
 │   │   │   ├── data/                    # Encrypted offline schedule cache and repository
