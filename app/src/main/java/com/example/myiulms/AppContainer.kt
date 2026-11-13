@@ -2,6 +2,8 @@ package com.example.myiulms
 
 import android.app.Application
 import android.content.Context
+import androidx.work.Configuration
+import com.example.myiulms.alarms.ClassAlertWork
 import com.example.myiulms.data.PortalRepository
 
 /**
@@ -32,8 +34,21 @@ class AppContainer(app: Application) {
     val portal: PortalRepository by lazy { PortalRepository(app) { client } }
 }
 
-class MyIulmsApp : Application() {
+class MyIulmsApp : Application(), Configuration.Provider {
     val container: AppContainer by lazy { AppContainer(this) }
+
+    // WorkManager's startup initializer is removed in the manifest; this builds
+    // it on demand instead, when ClassAlertWork.sync first runs, so its
+    // database is never opened on the main thread.
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder().build()
+
+    override fun onCreate() {
+        super.onCreate()
+        // Re-register the reminder safety net after a reboot or process start;
+        // the periodic work itself is only kept while reminders are on.
+        ClassAlertWork.sync(this)
+    }
 }
 
 /** Shared dependencies from any Context in this process. */

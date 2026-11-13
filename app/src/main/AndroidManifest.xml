@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Class reminders (asked only when the student turns them on, Android 13+). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -7,6 +8,9 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <!-- Alarms are cleared by a reboot; this re-arms the next one. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Class reminders are the app's core job; asked for only while reminders
+         are on and the OEM battery saver is still restricting the app. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:name=".MyIulmsApp"
@@ -19,6 +23,17 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.MyIULMS">
+
+        <!-- WorkManager is initialized on demand (see MyIulmsApp), so app
+             startup does not open its database on the main thread. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                tools:node="remove" />
+        </provider>
 
         <provider
             android:name="androidx.core.content.FileProvider"

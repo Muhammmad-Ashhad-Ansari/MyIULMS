@@ -537,6 +537,8 @@ private fun HomeScreen(
                     onCheckForUpdates = vm::checkForUpdates,
                     onLogout = vm::logout,
                     studentName = vm.studentName,
+                    rememberMe = vm.rememberMe,
+                    snackbarHostState = snackbarHostState,
                     gpaTitle = gpaTitle
                 )
             },
@@ -629,6 +631,7 @@ private fun HomeScreen(
                         manualPull = remember { ManualPull() },
                         snackbarHostState = snackbarHostState,
                         studentName = vm.studentName,
+                        rememberMe = vm.rememberMe,
                         preview = true,
                         modifier = Modifier
                             .fillMaxSize()
@@ -675,7 +678,8 @@ private fun HomeScreen(
                                     onPullRefresh = { vm.refresh(page, showRefreshFeedback = false) },
                                     manualPull = manualPulls[page],
                                     snackbarHostState = snackbarHostState,
-                                    studentName = vm.studentName
+                                    studentName = vm.studentName,
+                                    rememberMe = vm.rememberMe
                                 )
                                 1 -> AttendanceScreen(
                                     vm.attendance,
@@ -1196,6 +1200,10 @@ private fun PortalTopBar(
     refreshEnabled: Boolean,
     onCheckForUpdates: () -> Unit,
     onLogout: () -> Unit,
+    /** Whether the encrypted login is kept; class reminders need it. */
+    rememberMe: Boolean,
+    /** The Scaffold's host, so hints sit above the floating navigation bar. */
+    snackbarHostState: SnackbarHostState,
     /** Shown in place of the name while a GPA card is scrolled away; null = name. */
     gpaTitle: String? = null
 ) {
@@ -1286,8 +1294,11 @@ private fun PortalTopBar(
                         }
                     )
                     PolicyOverflowItem(onDismissMenu = { menuExpanded = false })
-                    ClassRemindersMenuItem()
-                    ReminderTimeMenuItem(onClick = {
+                    ClassRemindersMenuItem(
+                        rememberMe = rememberMe,
+                        snackbarHostState = snackbarHostState
+                    )
+                    ReminderTimeMenuItem(rememberMe = rememberMe, onClick = {
                         menuExpanded = false
                         showReminderTime = true
                     })
@@ -1322,20 +1333,32 @@ private fun PortalTopBar(
  * settings. Off stops the notifications at once: the next alarm is re-armed as
  * a silent widget-only one (start, end, midnight). The menu stays open so the
  * switch visibly flips.
+ *
+ * The alarms read the timetable from the encrypted cache on disk, which only
+ * exists with "Remember me" on. The row itself always looks and behaves like a
+ * normal switch; only turning reminders on in a temporary session is refused,
+ * with a snackbar that names the prerequisite. Turning them off always works.
  */
 @Composable
-private fun ClassRemindersMenuItem() {
+private fun ClassRemindersMenuItem(
+    rememberMe: Boolean,
+    snackbarHostState: SnackbarHostState
+) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val enabled by ReminderSettings.enabled(context).collectAsState()
+    // Reminders default to on, but a temporary session cannot use them, so the
+    // row must not claim they are active.
+    val shownEnabled = enabled && rememberMe
     MyIulmsDropdownMenuItem(
         text = "Class reminders",
-        leadingIcon = if (enabled) Icons.Rounded.NotificationsActive else Icons.Rounded.NotificationsOff,
+        leadingIcon = if (shownEnabled) Icons.Rounded.NotificationsActive else Icons.Rounded.NotificationsOff,
         trailing = {
             // Display only: the whole row is the toggle target. Off-state colours
             // are explicit: the M3 defaults put a near-invisible thumb on this
             // theme's dark menu surface.
             Switch(
-                checked = enabled,
+                checked = shownEnabled,
                 onCheckedChange = null,
                 colors = SwitchDefaults.colors(
                     uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1345,26 +1368,41 @@ private fun ClassRemindersMenuItem() {
             )
         },
         onClick = {
-            ReminderSettings.setEnabled(context, !enabled)
-            NextClassWidgetSession.rescheduleAlarms(context)
+            if (!rememberMe) {
+                scope.launch {
+                    // Repeated taps replace the hint instead of queueing it.
+                    snackbarHostState.currentSnackbarData?.dismiss()
+                    snackbarHostState.showSnackbar(
+                        message = "Enable 'Remember me' at sign-in to use class reminders.",
+                        duration = SnackbarDuration.Long
+                    )
+                }
+            } else {
+                ReminderSettings.setEnabled(context, !enabled)
+                NextClassWidgetSession.rescheduleAlarms(context)
+            }
         },
         modifier = Modifier.semantics {
-            stateDescription = if (enabled) "On" else "Off"
+            stateDescription = if (shownEnabled) "On" else "Off"
         }
     )
 }
 
-/** "Remind me · 10 min before". Disabled while reminders are off. */
+/**
+ * "Remind me · 10 min before". Only shown while reminders are effectively on;
+ * with reminders off, or a temporary session that cannot use them, the offset
+ * would have nothing to apply to.
+ */
 @Composable
-private fun ReminderTimeMenuItem(onClick: () -> Unit) {
+private fun ReminderTimeMenuItem(rememberMe: Boolean, onClick: () -> Unit) {
     val context = LocalContext.current
     val enabled by ReminderSettings.enabled(context).collectAsState()
+    if (!enabled || !rememberMe) return
     val lead by ReminderSettings.leadMinutesFlow(context).collectAsState()
     MyIulmsDropdownMenuItem(
         text = "Remind me",
         supportingText = "$lead min before class",
         leadingIcon = Icons.Rounded.Schedule,
-        enabled = enabled,
         onClick = onClick
     )
 }
@@ -1641,6 +1679,7 @@ private fun SchedulesScreen(
     manualPull: ManualPull,
     snackbarHostState: SnackbarHostState,
     studentName: String?,
+    rememberMe: Boolean,
     modifier: Modifier = Modifier,
     // True for the predictive-back mirror behind the pager: content only, no
     // second set of side effects (see ScheduleTips.interactive).
@@ -1672,6 +1711,7 @@ private fun SchedulesScreen(
         }
 
         ScheduleTips(
+            rememberMe = rememberMe,
             modifier = Modifier.padding(horizontal = 18.dp, vertical = AppSpacing.Xs),
             interactive = !preview
         )

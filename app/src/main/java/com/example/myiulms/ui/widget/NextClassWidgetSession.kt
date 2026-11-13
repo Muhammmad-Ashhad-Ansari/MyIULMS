@@ -3,6 +3,7 @@ package com.example.myiulms.ui.widget
 import android.content.Context
 import androidx.core.content.edit
 import androidx.glance.appwidget.updateAll
+import com.example.myiulms.alarms.ClassAlertWork
 import com.example.myiulms.alarms.WidgetAlarmScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +52,8 @@ object NextClassWidgetSession {
         scope.launch { runCatching { NextClassWidget().updateAll(app) } }
         // Signed out: cancels the alarm (and with it any pending reminder).
         rescheduleAlarms(app)
+        // Signed in: keeps the WorkManager reminder fallback; signed out: stops it.
+        ClassAlertWork.sync(app)
     }
 
     /** The cached schedule changed: re-read it in every widget and re-arm the alarm. */

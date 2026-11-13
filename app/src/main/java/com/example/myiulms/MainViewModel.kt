@@ -241,6 +241,13 @@ class MainViewModel(
         private set
     var savedPassword: String? = null
         private set
+
+    /**
+     * True while the encrypted login is kept for the next launch ("Remember me").
+     * Only then is the timetable cached on disk, which the class alarms and the
+     * WorkManager fallback read; the reminder tips explain this when it is off.
+     */
+    val rememberMe: Boolean get() = savedUser != null
     private var lastVoucherAction: Voucher? = null
 
     /**

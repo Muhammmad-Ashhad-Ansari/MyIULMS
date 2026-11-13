@@ -5,6 +5,7 @@ import android.app.AlarmManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.PowerManager
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
@@ -50,6 +51,8 @@ object ReminderSettings {
             if (enabled) putLong(KEY_HANDLED_UNTIL, System.currentTimeMillis())
         }
         enabledFlow(context).value = enabled
+        // The WorkManager fallback exists only while reminders are on.
+        ClassAlertWork.sync(context)
     }
 
     @Volatile
@@ -104,4 +107,14 @@ object ClassAlertPermissions {
     fun canScheduleExact(context: Context): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
             context.getSystemService(AlarmManager::class.java).canScheduleExactAlarms()
+
+    /**
+     * True when the battery saver no longer restricts the app ("Unrestricted").
+     * Doze delays inexact alarms, and OEM task killers (Vivo, Xiaomi, Oppo) can
+     * cancel them outright; the exemption keeps the alarm chain and the
+     * WorkManager fallback running in the background.
+     */
+    fun isIgnoringBatteryOptimizations(context: Context): Boolean =
+        context.getSystemService(PowerManager::class.java)
+            .isIgnoringBatteryOptimizations(context.packageName)
 }
