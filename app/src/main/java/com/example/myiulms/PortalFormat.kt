@@ -1,5 +1,6 @@
 package com.example.myiulms
 
+import com.example.myiulms.ui.dashboard.formatClassDuration
 import com.example.myiulms.ui.dashboard.formatWallClock
 import com.example.myiulms.ui.dashboard.parseScheduleInterval
 import java.text.NumberFormat
@@ -47,13 +48,15 @@ fun formatExamTimeRange(startMinuteOfDay: Int, endMinuteOfDay: Int): String {
     }
 }
 
-/** Exam duration: 90 → "1h 30m", 120 → "2h", 45 → "45m"; blank for no interval. */
-fun formatExamDuration(minutes: Int): String = when {
-    minutes <= 0 -> ""
-    minutes < 60 -> "${minutes}m"
-    minutes % 60 == 0 -> "${minutes / 60}h"
-    else -> "${minutes / 60}h ${minutes % 60}m"
-}
+/**
+ * Exam duration: 90 → "1h 30m", 120 → "2h", 45 → "45m"; blank for no interval.
+ *
+ * Shares [formatClassDuration]'s formatting; only the no-interval case differs,
+ * because an exam card has no length line to show while a class capsule still
+ * needs a label.
+ */
+fun formatExamDuration(minutes: Int): String =
+    if (minutes <= 0) "" else formatClassDuration(minutes)
 
 /** Whole days until an exam: "6 days left", or "Today"/"Tomorrow"; "Passed" once behind us. */
 fun examCountdown(daysUntil: Long): String = when {

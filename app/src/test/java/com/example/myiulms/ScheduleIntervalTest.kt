@@ -305,6 +305,14 @@ class ScheduleIntervalTest {
     }
 
     @Test
+    fun `only the zero case differs between class and exam duration`() {
+        assertEquals("0m", formatClassDuration(0))
+        assertEquals("", formatExamDuration(0))
+        assertEquals("2h 5m", formatClassDuration(125))
+        assertEquals(formatClassDuration(125), formatExamDuration(125))
+    }
+
+    @Test
     fun `class duration matches the parsed interval for a real portal cell`() {
         // Same derivation the row uses: parse once, format the duration field.
         val interval = parseScheduleInterval("1:00 PM - 2:20 PM")
