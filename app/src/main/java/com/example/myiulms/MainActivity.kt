@@ -2065,212 +2065,212 @@ private fun WeeklyScheduleContent(
                 enabled = enabled
             ) { clock ->
                 LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxWidth(),
-                contentPadding = PaddingValues(
-                    start = ListGutter,
-                    // 0.dp: this list begins directly under the static chip bar, so
-                    // any top padding would be a visible dead band between the bar
-                    // and the first row. The 12.dp the screen wants below the status
-                    // bar is carried by the heading item's own top padding.
-                    top = 0.dp,
-                    end = ListGutter,
-                    bottom = listBottomClearance()
-                )
-            ) {
-                // Heading and countdown are ordinary items and scroll away; the day
-                // labels below are the list's sticky rows and pin to this list's
-                // content edge, which is directly under the static chip bar.
-                rows.forEach { row ->
-                    when (row) {
-                        WeeklyRow.Heading -> item(key = ITEM_KEY_HEADING) {
-                            // Carries what `contentPadding.top` used to hold, so the screen
-                            // still starts 12.dp below the status bar without leaving a
-                            // gap the day labels would scroll through. The bottom padding
-                            // replaces the old list-wide `spacedBy` gap, which had to go
-                            // so rows inside one day can touch.
-                            Box(
-                                modifier = Modifier.padding(
-                                    top = AppSpacing.Md,
-                                    bottom = AppSpacing.Md
-                                )
-                            ) {
-                                ScreenHeading(
-                                    title = "Weekly class schedule",
-                                    subtitle = distinctSubtitle(schedule.title, "Weekly class schedule", "Your semester classes"),
-                                    // Same slot the result and transcript screens use for
-                                    // their share buttons, so the affordance reads
-                                    // identically across the app. It lives here rather than
-                                    // in the top app bar because this block only composes on
-                                    // the "Weekly Classes" sub-tab, which is what scopes the
-                                    // button to that view without threading the sub-tab
-                                    // selection up to PortalTopBar.
-                                    action = {
-                                        IconButton(
-                                            onClick = {
-                                                // `shareContext` is read at composition time,
-                                                // not inside this lambda: an onClick body is
-                                                // not a composable scope, so
-                                                // `LocalContext.current` cannot be called
-                                                // here. Holding it only for the life of this
-                                                // composition is what keeps the Activity
-                                                // from leaking into the ViewModel.
-                                                //
-                                                // `shareScope.launch` is required because the
-                                                // renderer is a suspend function: it allocates
-                                                // a ~10MB bitmap and PNG-compresses it on
-                                                // Dispatchers.Default. Launching on the
-                                                // composition scope also ties the job to this
-                                                // screen, so it is cancelled if the student
-                                                // leaves before the chooser appears.
-                                                shareScope.launch {
-                                                    runCatching {
-                                                        shareScheduleAsPng(shareContext, studentName, schedule)
-                                                    }.onFailure {
-                                                        Toast.makeText(
-                                                            shareContext,
-                                                            "Could not share schedule.",
-                                                            Toast.LENGTH_SHORT
-                                                        ).show()
+                    state = listState,
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(
+                            start = ListGutter,
+                            // 0.dp: this list begins directly under the static chip bar, so
+                            // any top padding would be a visible dead band between the bar
+                            // and the first row. The 12.dp the screen wants below the status
+                            // bar is carried by the heading item's own top padding.
+                            top = 0.dp,
+                            end = ListGutter,
+                            bottom = listBottomClearance()
+                    )
+                ) {
+                    // Heading and countdown are ordinary items and scroll away; the day
+                    // labels below are the list's sticky rows and pin to this list's
+                    // content edge, which is directly under the static chip bar.
+                    rows.forEach { row ->
+                        when (row) {
+                            WeeklyRow.Heading -> item(key = ITEM_KEY_HEADING) {
+                                // Carries what `contentPadding.top` used to hold, so the screen
+                                // still starts 12.dp below the status bar without leaving a
+                                // gap the day labels would scroll through. The bottom padding
+                                // replaces the old list-wide `spacedBy` gap, which had to go
+                                // so rows inside one day can touch.
+                                Box(
+                                    modifier = Modifier.padding(
+                                        top = AppSpacing.Md,
+                                        bottom = AppSpacing.Md
+                                    )
+                                ) {
+                                    ScreenHeading(
+                                        title = "Weekly class schedule",
+                                        subtitle = distinctSubtitle(schedule.title, "Weekly class schedule", "Your semester classes"),
+                                        // Same slot the result and transcript screens use for
+                                        // their share buttons, so the affordance reads
+                                        // identically across the app. It lives here rather than
+                                        // in the top app bar because this block only composes on
+                                        // the "Weekly Classes" sub-tab, which is what scopes the
+                                        // button to that view without threading the sub-tab
+                                        // selection up to PortalTopBar.
+                                        action = {
+                                            IconButton(
+                                                onClick = {
+                                                    // `shareContext` is read at composition time,
+                                                    // not inside this lambda: an onClick body is
+                                                    // not a composable scope, so
+                                                    // `LocalContext.current` cannot be called
+                                                    // here. Holding it only for the life of this
+                                                    // composition is what keeps the Activity
+                                                    // from leaking into the ViewModel.
+                                                    //
+                                                    // `shareScope.launch` is required because the
+                                                    // renderer is a suspend function: it allocates
+                                                    // a ~10MB bitmap and PNG-compresses it on
+                                                    // Dispatchers.Default. Launching on the
+                                                    // composition scope also ties the job to this
+                                                    // screen, so it is cancelled if the student
+                                                    // leaves before the chooser appears.
+                                                    shareScope.launch {
+                                                        runCatching {
+                                                            shareScheduleAsPng(shareContext, studentName, schedule)
+                                                        }.onFailure {
+                                                            Toast.makeText(
+                                                                shareContext,
+                                                                "Could not share schedule.",
+                                                                Toast.LENGTH_SHORT
+                                                            ).show()
+                                                        }
                                                     }
                                                 }
+                                            ) {
+                                                // Heading action tint matches InfoIconButton
+                                                // so every heading action reads identically.
+                                                Icon(
+                                                    Icons.Rounded.Share,
+                                                    contentDescription = "Share schedule",
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
                                             }
+                                        }
+                                    )
+                                }
+                            }
+
+                            WeeklyRow.Focus -> item(key = ITEM_KEY_DASHBOARD) {
+                                // Bottom padding stands in for the removed list-wide
+                                // `spacedBy` gap before the first day label.
+                                Box(modifier = Modifier.padding(bottom = AppSpacing.Md)) {
+                                    ScheduleFocusHost(
+                                        schedule = schedule,
+                                        enabled = enabled,
+                                        isVisible = { focusVisible }
+                                    )
+                                }
+                            }
+
+                            is WeeklyRow.DayHeader -> {
+                                val day = row.day
+                                // Sticky, and now genuinely permanent-looking: the chip bar
+                                // that used to evict these labels has been hoisted OUT of the
+                                // list, so this is the only sticky layer and nothing can
+                                // push it off. It pins to the list's content edge, which
+                                // sits directly beneath the static chip bar -- no modifier
+                                // offset needed, and none would work anyway, since a pin
+                                // position is decided by the LazyList layout rather than by
+                                // any modifier inside the slot.
+                                //
+                                // `CircleShape`: the pill is roughly 56x32dp, so its
+                                // half-height is ~16dp and a circular outline is a true
+                                // capsule end on both axes. A fixed `RoundedCornerShape`
+                                // would need hand-matching to that height and would drift
+                                // when the font scale changed.
+                                stickyHeader(key = dayLabelKey(day)) {
+                                    // Invisible full-width shield. A pinned sticky header is
+                                    // composed in a separate overlay layout drawn ON TOP of
+                                    // the main item layer, so entry cards travel underneath
+                                    // the day label. The pill alone covers only its own
+                                    // ~56dp and cannot mask a 360dp scroll, so card titles
+                                    // ghost straight through the day name without this.
+                                    //
+                                    // Fill is `background`, matching the list, so the mask is
+                                    // invisible and only the pill reads as a shape.
+                                    Surface(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        color = MaterialTheme.colorScheme.background
+                                    ) {
+                                        Surface(
+                                            modifier = Modifier.padding(
+                                                // ListGutter keeps the capsule's inset on
+                                                // the same 18.dp axis as every other row in
+                                                // this list.
+                                                horizontal = ListGutter,
+                                                // AppSpacing.Xs keeps the pill's own inset
+                                                // tight. The 12.dp gap to the day's first
+                                                // row lives on that row's outer padding, so
+                                                // it scrolls under this shield instead of
+                                                // leaving an exposed strip beneath it.
+                                                vertical = AppSpacing.Xs
+                                            ),
+                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                            shape = CircleShape
                                         ) {
-                                            // Heading action tint matches InfoIconButton
-                                            // so every heading action reads identically.
-                                            Icon(
-                                                Icons.Rounded.Share,
-                                                contentDescription = "Share schedule",
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            Text(
+                                                text = day,
+                                                // 16.dp / 6.dp track the pill's type size.
+                                                // Neither is a spacing token; AppSpacing
+                                                // stops at 4.dp.
+                                                modifier = Modifier.padding(
+                                                    horizontal = 16.dp,
+                                                    vertical = 6.dp
+                                                ),
+                                                // titleSmall, not labelMedium: the day is the
+                                                // only orientation cue in a list of otherwise
+                                                // identical cards, so it is set at the size a
+                                                // reader scans for rather than the size a
+                                                // caption uses.
+                                                style = MaterialTheme.typography.titleSmall,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Bold
                                             )
                                         }
                                     }
-                                )
-                            }
-                        }
-
-                        WeeklyRow.Focus -> item(key = ITEM_KEY_DASHBOARD) {
-                            // Bottom padding stands in for the removed list-wide
-                            // `spacedBy` gap before the first day label.
-                            Box(modifier = Modifier.padding(bottom = AppSpacing.Md)) {
-                                ScheduleFocusHost(
-                                    schedule = schedule,
-                                    enabled = enabled,
-                                    isVisible = { focusVisible }
-                                )
-                            }
-                        }
-
-                        is WeeklyRow.DayHeader -> {
-                            val day = row.day
-                            // Sticky, and now genuinely permanent-looking: the chip bar
-                            // that used to evict these labels has been hoisted OUT of the
-                            // list, so this is the only sticky layer and nothing can
-                            // push it off. It pins to the list's content edge, which
-                            // sits directly beneath the static chip bar -- no modifier
-                            // offset needed, and none would work anyway, since a pin
-                            // position is decided by the LazyList layout rather than by
-                            // any modifier inside the slot.
-                            //
-                            // `CircleShape`: the pill is roughly 56x32dp, so its
-                            // half-height is ~16dp and a circular outline is a true
-                            // capsule end on both axes. A fixed `RoundedCornerShape`
-                            // would need hand-matching to that height and would drift
-                            // when the font scale changed.
-                            stickyHeader(key = dayLabelKey(day)) {
-                                // Invisible full-width shield. A pinned sticky header is
-                                // composed in a separate overlay layout drawn ON TOP of
-                                // the main item layer, so entry cards travel underneath
-                                // the day label. The pill alone covers only its own
-                                // ~56dp and cannot mask a 360dp scroll, so card titles
-                                // ghost straight through the day name without this.
-                                //
-                                // Fill is `background`, matching the list, so the mask is
-                                // invisible and only the pill reads as a shape.
-                                Surface(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    color = MaterialTheme.colorScheme.background
-                                ) {
-                                    Surface(
-                                        modifier = Modifier.padding(
-                                            // ListGutter keeps the capsule's inset on
-                                            // the same 18.dp axis as every other row in
-                                            // this list.
-                                            horizontal = ListGutter,
-                                            // AppSpacing.Xs keeps the pill's own inset
-                                            // tight. The 12.dp gap to the day's first
-                                            // row lives on that row's outer padding, so
-                                            // it scrolls under this shield instead of
-                                            // leaving an exposed strip beneath it.
-                                            vertical = AppSpacing.Xs
-                                        ),
-                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                                        shape = CircleShape
-                                    ) {
-                                        Text(
-                                            text = day,
-                                            // 16.dp / 6.dp track the pill's type size.
-                                            // Neither is a spacing token; AppSpacing
-                                            // stops at 4.dp.
-                                            modifier = Modifier.padding(
-                                                horizontal = 16.dp,
-                                                vertical = 6.dp
-                                            ),
-                                            // titleSmall, not labelMedium: the day is the
-                                            // only orientation cue in a list of otherwise
-                                            // identical cards, so it is set at the size a
-                                            // reader scans for rather than the size a
-                                            // caption uses.
-                                            style = MaterialTheme.typography.titleSmall,
-                                            color = MaterialTheme.colorScheme.primary,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
                                 }
                             }
-                        }
 
-                        is WeeklyRow.Entry -> item(key = entryKey(row.day, row.entry)) {
-                            // Every row reads `today()`, which changes once a
-                            // day. The minute and the live key are read only in
-                            // the today branch, so rows of other days never
-                            // subscribe to a value that ticks every minute.
-                            val today = clock.today()
-                            val interval = parseScheduleInterval(row.entry.time)
-                            val nowMinute = if (row.day == today) clock.minuteOfDay() else null
-                            val rowState = if (nowMinute == null) {
-                                ScheduleRowState.NotToday
-                            } else {
-                                scheduleRowState(
-                                    isToday = true,
-                                    rowKey = entryKey(row.day, row.entry),
+                            is WeeklyRow.Entry -> item(key = entryKey(row.day, row.entry)) {
+                                // Every row reads `today()`, which changes once a
+                                // day. The minute and the live key are read only in
+                                // the today branch, so rows of other days never
+                                // subscribe to a value that ticks every minute.
+                                val today = clock.today()
+                                val interval = parseScheduleInterval(row.entry.time)
+                                val nowMinute = if (row.day == today) clock.minuteOfDay() else null
+                                val rowState = if (nowMinute == null) {
+                                    ScheduleRowState.NotToday
+                                } else {
+                                    scheduleRowState(
+                                        isToday = true,
+                                        rowKey = entryKey(row.day, row.entry),
+                                        interval = interval,
+                                        nowMinuteOfDay = nowMinute,
+                                        liveKey = clock.liveKey()
+                                    )
+                                }
+                                WeeklyScheduleCard(
+                                    entry = row.entry,
+                                    isFirst = row.isFirst,
+                                    isLast = row.isLast,
                                     interval = interval,
-                                    nowMinuteOfDay = nowMinute,
-                                    liveKey = clock.liveKey()
+                                    rowState = rowState,
+                                    nowMinuteOfDay = nowMinute
                                 )
                             }
-                            WeeklyScheduleCard(
-                                entry = row.entry,
-                                isFirst = row.isFirst,
-                                isLast = row.isLast,
-                                interval = interval,
-                                rowState = rowState,
-                                nowMinuteOfDay = nowMinute
+                        }
+                    }
+
+                    if (groups.isEmpty()) {
+                        item {
+                            EmptyState(
+                                icon = Icons.Rounded.EventAvailable,
+                                title = "No weekly schedule",
+                                body = "Your class schedule is not available on the IULMS portal right now."
                             )
                         }
                     }
                 }
-
-                if (groups.isEmpty()) {
-                    item {
-                        EmptyState(
-                            icon = Icons.Rounded.EventAvailable,
-                            title = "No weekly schedule",
-                            body = "Your class schedule is not available on the IULMS portal right now."
-                        )
-                    }
-                }
-            }
             }
         }
 
