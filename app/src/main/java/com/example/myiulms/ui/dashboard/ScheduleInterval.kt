@@ -385,6 +385,26 @@ private val WALL_CLOCK_FORMATTER: DateTimeFormatter =
     DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH)
 
 /**
+ * Compact class length for the schedule row's time column.
+ *
+ * Zero parts are dropped so a whole-hour class reads "2h", not "2h 0m", and the
+ * minutes are never zero-padded. Takes the already-parsed [ScheduleInterval]'s
+ * [ScheduleInterval.durationMinutes] rather than a time string: the row has
+ * already parsed the interval for its start/end, and re-parsing would be a
+ * second, divergent interpretation of the same cell.
+ */
+fun formatClassDuration(minutes: Int): String {
+    val safe = minutes.coerceAtLeast(0)
+    val hours = safe / MINUTES_PER_HOUR
+    val remainder = safe % MINUTES_PER_HOUR
+    return when {
+        hours == 0 -> "${remainder}m"
+        remainder == 0 -> "${hours}h"
+        else -> "${hours}h ${remainder}m"
+    }
+}
+
+/**
  * Normalises a portal room value into a "Room X" label.
  *
  * Strips a leading "Room" so a location that already carries the word cannot

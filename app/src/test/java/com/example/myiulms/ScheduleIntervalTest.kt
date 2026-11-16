@@ -1,6 +1,7 @@
 package com.example.myiulms
 
 import com.example.myiulms.ui.dashboard.ScheduleFocus
+import com.example.myiulms.ui.dashboard.formatClassDuration
 import com.example.myiulms.ui.dashboard.formatLiveMetadata
 import com.example.myiulms.ui.dashboard.formatRemainingClock
 import com.example.myiulms.ui.dashboard.formatRoomLabel
@@ -291,6 +292,24 @@ class ScheduleIntervalTest {
     fun `wall clock reduces an overnight end time instead of throwing`() {
         // A 22:00-02:00 class ends at minute 1560; LocalTime rejects hour 26.
         assertEquals("2:00 AM", formatWallClock(1560))
+    }
+
+    @Test
+    fun `class duration drops zero parts and never zero-pads minutes`() {
+        assertEquals("1m", formatClassDuration(1))
+        assertEquals("50m", formatClassDuration(50))
+        assertEquals("1h", formatClassDuration(60))
+        assertEquals("1h 20m", formatClassDuration(80))
+        assertEquals("2h", formatClassDuration(120))
+        assertEquals("2h 5m", formatClassDuration(125))
+    }
+
+    @Test
+    fun `class duration matches the parsed interval for a real portal cell`() {
+        // Same derivation the row uses: parse once, format the duration field.
+        val interval = parseScheduleInterval("1:00 PM - 2:20 PM")
+        assertEquals(80, interval?.durationMinutes)
+        assertEquals("1h 20m", formatClassDuration(interval!!.durationMinutes))
     }
 
     @Test

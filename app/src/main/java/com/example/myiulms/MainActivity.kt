@@ -85,10 +85,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -154,10 +158,15 @@ import com.example.myiulms.ui.components.MyIulmsDropdownMenuItem
 import com.example.myiulms.ui.dashboard.CampusZone
 import com.example.myiulms.ui.dashboard.ScheduleFocus
 import com.example.myiulms.ui.dashboard.ScheduleFocusCard
+import com.example.myiulms.ui.dashboard.ScheduleInterval
+import com.example.myiulms.ui.dashboard.ScheduleRowState
+import com.example.myiulms.ui.dashboard.classProgressFraction
+import com.example.myiulms.ui.dashboard.scheduleRowState
 import com.example.myiulms.ui.dashboard.groupScheduleByDay
 import com.example.myiulms.ui.dashboard.liveSecondsRemaining
 import com.example.myiulms.ui.dashboard.minuteOfDay
 import com.example.myiulms.ui.dashboard.nextFocusTickDelayMillis
+import com.example.myiulms.ui.dashboard.formatClassDuration
 import com.example.myiulms.ui.dashboard.formatRoomLabel
 import com.example.myiulms.ui.dashboard.formatWallClock
 import com.example.myiulms.ui.dashboard.normalizeDay
@@ -1947,6 +1956,9 @@ private fun WeeklyScheduleContent(
     // Shared with the share compiler via groupScheduleByDay so the text a
     // student shares cannot disagree with the list they are looking at.
     val groups = groupScheduleByDay(schedule.entries)
+    // One description of the list, used by both the list body and the chip
+    // scroll arithmetic so the two cannot disagree about what row sits where.
+    val rows = remember(groups) { weeklyRows(groups) }
 
     val weekDays = listOf("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
     val classDays = groups.keys
@@ -2045,7 +2057,14 @@ private fun WeeklyScheduleContent(
             onRefresh = { manualPull.pulled = true; onPullRefresh() },
             modifier = Modifier.fillMaxWidth()
         ) {
-            LazyColumn(
+            // Minute clock for the entry rows only. The LazyColumn lambda body
+            // never reads it: each item subscribes on its own, so a tick cannot
+            // recompose the list, the screen, or days other than today.
+            ScheduleRowsClockHost(
+                entries = schedule.entries,
+                enabled = enabled
+            ) { clock ->
+                LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxWidth(),
                 contentPadding = PaddingValues(
@@ -2057,77 +2076,189 @@ private fun WeeklyScheduleContent(
                     top = 0.dp,
                     end = ListGutter,
                     bottom = listBottomClearance()
-                ),
-                verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
+                )
             ) {
                 // Heading and countdown are ordinary items and scroll away; the day
                 // labels below are the list's sticky rows and pin to this list's
                 // content edge, which is directly under the static chip bar.
-                item(key = ITEM_KEY_HEADING) {
-                    // Carries what `contentPadding.top` used to hold, so the screen
-                    // still starts 12.dp below the status bar without leaving a
-                    // gap the day labels would scroll through.
-                    Box(modifier = Modifier.padding(top = AppSpacing.Md)) {
-                        ScreenHeading(
-                            title = "Weekly class schedule",
-                            subtitle = distinctSubtitle(schedule.title, "Weekly class schedule", "Your semester classes"),
-                            // Same slot the result and transcript screens use for
-                            // their share buttons, so the affordance reads
-                            // identically across the app. It lives here rather than
-                            // in the top app bar because this block only composes on
-                            // the "Weekly Classes" sub-tab, which is what scopes the
-                            // button to that view without threading the sub-tab
-                            // selection up to PortalTopBar.
-                            action = {
-                                IconButton(
-                                    onClick = {
-                                        // `shareContext` is read at composition time,
-                                        // not inside this lambda: an onClick body is
-                                        // not a composable scope, so
-                                        // `LocalContext.current` cannot be called
-                                        // here. Holding it only for the life of this
-                                        // composition is what keeps the Activity
-                                        // from leaking into the ViewModel.
-                                        //
-                                        // `shareScope.launch` is required because the
-                                        // renderer is a suspend function: it allocates
-                                        // a ~10MB bitmap and PNG-compresses it on
-                                        // Dispatchers.Default. Launching on the
-                                        // composition scope also ties the job to this
-                                        // screen, so it is cancelled if the student
-                                        // leaves before the chooser appears.
-                                        shareScope.launch {
-                                            runCatching {
-                                                shareScheduleAsPng(shareContext, studentName, schedule)
-                                            }.onFailure {
-                                                Toast.makeText(
-                                                    shareContext,
-                                                    "Could not share schedule.",
-                                                    Toast.LENGTH_SHORT
-                                                ).show()
+                rows.forEach { row ->
+                    when (row) {
+                        WeeklyRow.Heading -> item(key = ITEM_KEY_HEADING) {
+                            // Carries what `contentPadding.top` used to hold, so the screen
+                            // still starts 12.dp below the status bar without leaving a
+                            // gap the day labels would scroll through. The bottom padding
+                            // replaces the old list-wide `spacedBy` gap, which had to go
+                            // so rows inside one day can touch.
+                            Box(
+                                modifier = Modifier.padding(
+                                    top = AppSpacing.Md,
+                                    bottom = AppSpacing.Md
+                                )
+                            ) {
+                                ScreenHeading(
+                                    title = "Weekly class schedule",
+                                    subtitle = distinctSubtitle(schedule.title, "Weekly class schedule", "Your semester classes"),
+                                    // Same slot the result and transcript screens use for
+                                    // their share buttons, so the affordance reads
+                                    // identically across the app. It lives here rather than
+                                    // in the top app bar because this block only composes on
+                                    // the "Weekly Classes" sub-tab, which is what scopes the
+                                    // button to that view without threading the sub-tab
+                                    // selection up to PortalTopBar.
+                                    action = {
+                                        IconButton(
+                                            onClick = {
+                                                // `shareContext` is read at composition time,
+                                                // not inside this lambda: an onClick body is
+                                                // not a composable scope, so
+                                                // `LocalContext.current` cannot be called
+                                                // here. Holding it only for the life of this
+                                                // composition is what keeps the Activity
+                                                // from leaking into the ViewModel.
+                                                //
+                                                // `shareScope.launch` is required because the
+                                                // renderer is a suspend function: it allocates
+                                                // a ~10MB bitmap and PNG-compresses it on
+                                                // Dispatchers.Default. Launching on the
+                                                // composition scope also ties the job to this
+                                                // screen, so it is cancelled if the student
+                                                // leaves before the chooser appears.
+                                                shareScope.launch {
+                                                    runCatching {
+                                                        shareScheduleAsPng(shareContext, studentName, schedule)
+                                                    }.onFailure {
+                                                        Toast.makeText(
+                                                            shareContext,
+                                                            "Could not share schedule.",
+                                                            Toast.LENGTH_SHORT
+                                                        ).show()
+                                                    }
+                                                }
                                             }
+                                        ) {
+                                            // Heading action tint matches InfoIconButton
+                                            // so every heading action reads identically.
+                                            Icon(
+                                                Icons.Rounded.Share,
+                                                contentDescription = "Share schedule",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
                                         }
                                     }
+                                )
+                            }
+                        }
+
+                        WeeklyRow.Focus -> item(key = ITEM_KEY_DASHBOARD) {
+                            // Bottom padding stands in for the removed list-wide
+                            // `spacedBy` gap before the first day label.
+                            Box(modifier = Modifier.padding(bottom = AppSpacing.Md)) {
+                                ScheduleFocusHost(
+                                    schedule = schedule,
+                                    enabled = enabled,
+                                    isVisible = { focusVisible }
+                                )
+                            }
+                        }
+
+                        is WeeklyRow.DayHeader -> {
+                            val day = row.day
+                            // Sticky, and now genuinely permanent-looking: the chip bar
+                            // that used to evict these labels has been hoisted OUT of the
+                            // list, so this is the only sticky layer and nothing can
+                            // push it off. It pins to the list's content edge, which
+                            // sits directly beneath the static chip bar -- no modifier
+                            // offset needed, and none would work anyway, since a pin
+                            // position is decided by the LazyList layout rather than by
+                            // any modifier inside the slot.
+                            //
+                            // `CircleShape`: the pill is roughly 56x32dp, so its
+                            // half-height is ~16dp and a circular outline is a true
+                            // capsule end on both axes. A fixed `RoundedCornerShape`
+                            // would need hand-matching to that height and would drift
+                            // when the font scale changed.
+                            stickyHeader(key = dayLabelKey(day)) {
+                                // Invisible full-width shield. A pinned sticky header is
+                                // composed in a separate overlay layout drawn ON TOP of
+                                // the main item layer, so entry cards travel underneath
+                                // the day label. The pill alone covers only its own
+                                // ~56dp and cannot mask a 360dp scroll, so card titles
+                                // ghost straight through the day name without this.
+                                //
+                                // Fill is `background`, matching the list, so the mask is
+                                // invisible and only the pill reads as a shape.
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = MaterialTheme.colorScheme.background
                                 ) {
-                                    // Heading action tint matches InfoIconButton
-                                    // so every heading action reads identically.
-                                    Icon(
-                                        Icons.Rounded.Share,
-                                        contentDescription = "Share schedule",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    Surface(
+                                        modifier = Modifier.padding(
+                                            // ListGutter keeps the capsule's inset on
+                                            // the same 18.dp axis as every other row in
+                                            // this list.
+                                            horizontal = ListGutter,
+                                            // AppSpacing.Xs keeps the pill's own inset
+                                            // tight. The 12.dp gap to the day's first
+                                            // row lives on that row's outer padding, so
+                                            // it scrolls under this shield instead of
+                                            // leaving an exposed strip beneath it.
+                                            vertical = AppSpacing.Xs
+                                        ),
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                        shape = CircleShape
+                                    ) {
+                                        Text(
+                                            text = day,
+                                            // 16.dp / 6.dp track the pill's type size.
+                                            // Neither is a spacing token; AppSpacing
+                                            // stops at 4.dp.
+                                            modifier = Modifier.padding(
+                                                horizontal = 16.dp,
+                                                vertical = 6.dp
+                                            ),
+                                            // titleSmall, not labelMedium: the day is the
+                                            // only orientation cue in a list of otherwise
+                                            // identical cards, so it is set at the size a
+                                            // reader scans for rather than the size a
+                                            // caption uses.
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
                                 }
                             }
-                        )
-                    }
-                }
+                        }
 
-                item(key = ITEM_KEY_DASHBOARD) {
-                    ScheduleFocusHost(
-                        schedule = schedule,
-                        enabled = enabled,
-                        isVisible = { focusVisible }
-                    )
+                        is WeeklyRow.Entry -> item(key = entryKey(row.day, row.entry)) {
+                            // Every row reads `today()`, which changes once a
+                            // day. The minute and the live key are read only in
+                            // the today branch, so rows of other days never
+                            // subscribe to a value that ticks every minute.
+                            val today = clock.today()
+                            val interval = parseScheduleInterval(row.entry.time)
+                            val nowMinute = if (row.day == today) clock.minuteOfDay() else null
+                            val rowState = if (nowMinute == null) {
+                                ScheduleRowState.NotToday
+                            } else {
+                                scheduleRowState(
+                                    isToday = true,
+                                    rowKey = entryKey(row.day, row.entry),
+                                    interval = interval,
+                                    nowMinuteOfDay = nowMinute,
+                                    liveKey = clock.liveKey()
+                                )
+                            }
+                            WeeklyScheduleCard(
+                                entry = row.entry,
+                                isFirst = row.isFirst,
+                                isLast = row.isLast,
+                                interval = interval,
+                                rowState = rowState,
+                                nowMinuteOfDay = nowMinute
+                            )
+                        }
+                    }
                 }
 
                 if (groups.isEmpty()) {
@@ -2138,87 +2269,8 @@ private fun WeeklyScheduleContent(
                             body = "Your class schedule is not available on the IULMS portal right now."
                         )
                     }
-                } else {
-                    groups.forEach { (day, entries) ->
-                        // Sticky, and now genuinely permanent-looking: the chip bar that
-                        // used to evict these labels has been hoisted OUT of the
-                        // list, so this is the only sticky layer and nothing can
-                        // push it off. It pins to the list's content edge, which
-                        // sits directly beneath the static chip bar -- no modifier
-                        // offset needed, and none would work anyway, since a pin
-                        // position is decided by the LazyList layout rather than by
-                        // any modifier inside the slot.
-                        //
-                        // The dead full-width `background` shield that used to sit
-                        // here is gone: the pill is the only visible shape, and the
-                        // 20.dp of empty padding it contributed per day header went
-                        // with it.
-                        //
-                        // `CircleShape`: the pill is roughly 56x32dp, so its
-                        // half-height is ~16dp and a circular outline is a true
-                        // capsule end on both axes. A fixed `RoundedCornerShape`
-                        // would need hand-matching to that height and would drift
-                        // when the font scale changed.
-                        stickyHeader(key = dayLabelKey(day)) {
-                            // Invisible full-width shield. A pinned sticky header is
-                            // composed in a separate overlay layout drawn ON TOP of
-                            // the main item layer, so entry cards travel underneath
-                            // the day label. The pill alone covers only its own
-                            // ~56dp and cannot mask a 360dp scroll, so card titles
-                            // ghost straight through the day name without this.
-                            //
-                            // Fill is `background`, matching the list, so the mask is
-                            // invisible and only the pill reads as a shape.
-                            Surface(
-                                modifier = Modifier.fillMaxWidth(),
-                                color = MaterialTheme.colorScheme.background
-                            ) {
-                                Surface(
-                                    modifier = Modifier.padding(
-                                        // ListGutter keeps the capsule's inset on
-                                        // the same 18.dp axis as every other row in
-                                        // this list.
-                                        horizontal = ListGutter,
-                                        // AppSpacing.Xs. NOTE: the list's
-                                        // `Arrangement.spacedBy(AppSpacing.Md)`
-                                        // gap is 12.dp, and `Arrangement` space is
-                                        // layout space this shield does NOT cover,
-                                        // so an 8.dp strip directly beneath the
-                                        // shield is still exposed while cards slide
-                                        // under it. AppSpacing.Md (12.dp) would close
-                                        // that seam completely at the cost of 16.dp
-                                        // more height per day header.
-                                        vertical = AppSpacing.Xs
-                                    ),
-                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                                    shape = CircleShape
-                                ) {
-                                    Text(
-                                        text = day,
-                                        // 16.dp / 6.dp track the pill's type size.
-                                        // Neither is a spacing token; AppSpacing
-                                        // stops at 4.dp.
-                                        modifier = Modifier.padding(
-                                            horizontal = 16.dp,
-                                            vertical = 6.dp
-                                        ),
-                                        // titleSmall, not labelMedium: the day is the
-                                        // only orientation cue in a list of otherwise
-                                        // identical cards, so it is set at the size a
-                                        // reader scans for rather than the size a
-                                        // caption uses.
-                                        style = MaterialTheme.typography.titleSmall,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                        }
-                        items(entries, key = { entry -> entryKey(day, entry) }) { entry ->
-                            WeeklyScheduleCard(entry)
-                        }
-                    }
                 }
+            }
             }
         }
 
@@ -2282,20 +2334,60 @@ internal const val ITEM_KEY_DAY_CHIPS = "weekly-day-chips"
 internal const val ITEM_KEY_DASHBOARD = "class-dashboard"
 
 /**
- * Number of structural items the list emits before the first day group:
- * heading, countdown card.
+ * Number of structural rows the list emits before the first day group:
+ * heading and focus card.
  *
- * TWO, not three. The day-chip bar was hoisted out of the `LazyColumn` into a
- * static sibling, so it no longer occupies an index at all. When it was an
- * `item` this was 3; when it was a `stickyHeader` it was still 3, because
- * `item` and `stickyHeader` each consume exactly one index. Lifting it out of
- * the list is the one change that removes a slot.
- *
- * [dayGroupLabelItemIndex] adds this to every target, so adding or removing a
- * structural item is a single-line change here rather than a silent off-by-N in
- * the scroll arithmetic.
+ * Derived from [weeklyRows] rather than hard-coded, so adding or removing a
+ * structural row is a change in one row builder instead of a silent off-by-N in
+ * the chip scroll arithmetic.
  */
-internal const val ITEMS_BEFORE_DAY_GROUPS = 2
+internal val ITEMS_BEFORE_DAY_GROUPS: Int = weeklyRows(emptyMap()).size
+
+/**
+ * One row of the weekly list, independent of Compose.
+ *
+ * The list body and the chip-target arithmetic both walk this model, so an
+ * inserted row cannot make the two disagree about what sits where. [Entry] still
+ * maps to exactly one `LazyColumn` item and keeps [entryKey] as its key: this
+ * describes the emitted rows, it does not collapse a day into a single item.
+ */
+internal sealed interface WeeklyRow {
+    data object Heading : WeeklyRow
+    data object Focus : WeeklyRow
+    data class DayHeader(val day: String, val entryCount: Int) : WeeklyRow
+    data class Entry(
+        val day: String,
+        val entry: WeeklyScheduleEntry,
+        val isFirst: Boolean,
+        val isLast: Boolean
+    ) : WeeklyRow
+}
+
+/**
+ * Expands [groups] into the exact rows the list emits, in order.
+ *
+ * [groups] is already Monday-first ([groupScheduleByDay]), so iterating it here
+ * preserves the on-screen order. First/last flags let the compact row draw a
+ * grouped container without a second pass over the groups.
+ */
+internal fun weeklyRows(groups: Map<String, List<WeeklyScheduleEntry>>): List<WeeklyRow> =
+    buildList {
+        add(WeeklyRow.Heading)
+        add(WeeklyRow.Focus)
+        groups.forEach { (day, entries) ->
+            add(WeeklyRow.DayHeader(day, entries.size))
+            entries.forEachIndexed { index, entry ->
+                add(
+                    WeeklyRow.Entry(
+                        day = day,
+                        entry = entry,
+                        isFirst = index == 0,
+                        isLast = index == entries.lastIndex
+                    )
+                )
+            }
+        }
+    }
 
 /**
  * What a single LazyList row represents, independent of Compose.
@@ -2439,22 +2531,11 @@ private fun WeeklyDayChipsRow(
 /**
  * LazyList index of [day]'s day-label row.
  *
- * Walks the day groups in the same order the list emits them and counts what has
- * already been placed:
- *
- *  - [ITEMS_BEFORE_DAY_GROUPS] structural items (heading, countdown card)
- *    always precede the groups. The day-chip bar is not among them: it is a
- *    static sibling of the list, not a row in it.
- *  - For each earlier day that has classes, one label row plus that day's entry
- *    cards.
- *
- * The earlier days are taken from [weekDays] rather than from [groups] so the
- * weekday ordering cannot drift from the chip order the student is tapping. Days
- * with no classes are skipped, matching the list, which emits no group for them.
- *
- * `item {}` and `stickyHeader {}` each occupy exactly one index, so swapping
- * which of the chips and the labels is pinned leaves this arithmetic
- * bit-for-bit identical.
+ * Resolved against [weeklyRows], the same model the list body emits, so the
+ * answer is the row's actual position rather than a re-derived count. A day
+ * that [classDays] advertises but whose group is missing after a partial parse
+ * falls back to where that group would have started, preserving the previous
+ * arithmetic for that edge case.
  */
 internal fun dayGroupLabelItemIndex(
     day: String,
@@ -2462,6 +2543,12 @@ internal fun dayGroupLabelItemIndex(
     classDays: Set<String>,
     groups: Map<String, List<WeeklyScheduleEntry>>
 ): Int {
+    val rows = weeklyRows(groups)
+    val exact = rows.indexOfFirst { it is WeeklyRow.DayHeader && it.day == day }
+    if (exact >= 0) return exact
+
+    // A day can be advertised by `classDays` while its group is absent. Keep
+    // pointing at where that group would have started.
     val priorGroups = weekDays
         .takeWhile { it != day }
         .filter { it in classDays }
@@ -2524,101 +2611,490 @@ private fun ScheduleFocusHost(
     )
 }
 
+/**
+ * Read-on-demand view of the entry rows' clock.
+ *
+ * Separate functions rather than one snapshot object so subscriptions stay
+ * narrow: every row reads [today] (which changes once a day), and only today's
+ * rows read [minuteOfDay] and [liveKey]. A single combined snapshot would
+ * invalidate every row on every minute.
+ */
+private class ScheduleRowsClock(
+    private val todayState: State<String>,
+    private val minuteState: State<Int>,
+    private val liveKeyState: State<String?>
+) {
+    fun today(): String = todayState.value
+    fun minuteOfDay(): Int = minuteState.value
+    fun liveKey(): String? = liveKeyState.value
+}
+
+/**
+ * Minute clock for the entry rows.
+ *
+ * Deliberately separate from [ScheduleFocusHost]: the focus card keeps its own
+ * 1-second loop and every invariant around it, while the rows only need the
+ * minute boundary. Both derive liveness from the same resolver and the same
+ * [CampusZone] helpers, so they cannot disagree about which class is live; the
+ * row carries no seconds, so the loops' sub-second offsets are invisible.
+ *
+ * The host reads no clock state in its own composition, so a tick recomposes
+ * only the items that asked for it — never the LazyColumn or this screen.
+ */
 @Composable
-private fun WeeklyScheduleCard(entry: WeeklyScheduleEntry) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(AppRadius.Large),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            // AppSpacing.Md, not the bare 8.dp this was: the time row, the
-            // title and the Room/Faculty row are three dense text blocks, and at
-            // 8.dp they read as one undivided mass. 12.dp separates them without
-            // altering any block's own leading. The token also replaces a raw
-            // literal that no other spacing in this card used.
-            verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
-        ) {
-            if (entry.time.isNotBlank()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        modifier = Modifier.weight(1f),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Schedule,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(Modifier.width(AppSpacing.Sm))
-                        Text(
-                            text = formatTime12Hour(entry.time),
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    scheduleDurationLabel(entry.time)?.let { duration ->
-                        Spacer(Modifier.width(AppSpacing.Sm))
-                        DurationBadge(duration)
-                    }
-                }
-            }
-            Text(
-                text = entry.courseTitle.ifBlank { "Class" },
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
+private fun ScheduleRowsClockHost(
+    entries: List<WeeklyScheduleEntry>,
+    enabled: Boolean,
+    content: @Composable (ScheduleRowsClock) -> Unit
+) {
+    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    val todayState = remember { derivedStateOf { todayAbbrev(nowMillis) } }
+    val minuteState = remember { derivedStateOf { minuteOfDay(nowMillis) } }
+    val focusState = remember(entries) {
+        derivedStateOf {
+            resolveScheduleFocus(
+                entries = entries,
+                today = todayAbbrev(nowMillis),
+                minuteOfDay = minuteOfDay(nowMillis)
             )
-            // Room and Faculty share one line below the title instead of
-            // stacking as two full-width rows.
-            //
-            // The split is asymmetric on purpose. Room is a short, predictable
-            // token ("E-806", "Lab 3") so it is measured at its intrinsic width
-            // and takes only what it needs. Faculty is the variable-length field
-            // -- "Dr. Muhammad Rizwan Munir" is three times the width of a room
-            // number -- so it is the weighted child and absorbs ALL of the
-            // leftover space. Splitting the row 50/50 instead would cap faculty
-            // at half the card and truncate names that would otherwise fit.
-            //
-            // Both blocks are still width-bounded: Room by the row's own max
-            // constraint (clamped by wrapContentWidth), Faculty by its weight.
-            // Either way the value Text ellipsizes instead of wrapping, so a
-            // long name cannot grow the card.
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(AppSpacing.Lg)
+        }
+    }
+    val liveKeyState = remember(focusState, todayState) {
+        derivedStateOf {
+            (focusState.value as? ScheduleFocus.Live)?.let { entryKey(todayState.value, it.entry) }
+        }
+    }
+    val clock = remember(todayState, minuteState, liveKeyState) {
+        ScheduleRowsClock(todayState, minuteState, liveKeyState)
+    }
+
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(entries, enabled, lifecycle) {
+        if (!enabled) return@LaunchedEffect
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                nowMillis = System.currentTimeMillis()
+                // The same tick policy as the card, with visibility false:
+                // rows show no seconds, so the loop only needs the next minute.
+                delay(nextFocusTickDelayMillis(focusState.value, nowMillis, visible = false))
+            }
+        }
+    }
+
+    content(clock)
+}
+
+@Composable
+private fun WeeklyScheduleCard(
+    entry: WeeklyScheduleEntry,
+    isFirst: Boolean,
+    isLast: Boolean,
+    interval: ScheduleInterval?,
+    rowState: ScheduleRowState,
+    nowMinuteOfDay: Int?
+) {
+    val position = when {
+        isFirst && isLast -> WeeklyRowPosition.Single
+        isFirst -> WeeklyRowPosition.First
+        isLast -> WeeklyRowPosition.Last
+        else -> WeeklyRowPosition.Middle
+    }
+    val shape = when (position) {
+        WeeklyRowPosition.Single -> RoundedCornerShape(AppRadius.Medium)
+        WeeklyRowPosition.First -> RoundedCornerShape(
+            topStart = AppRadius.Medium,
+            topEnd = AppRadius.Medium
+        )
+        WeeklyRowPosition.Middle -> RectangleShape
+        WeeklyRowPosition.Last -> RoundedCornerShape(
+            bottomStart = AppRadius.Medium,
+            bottomEnd = AppRadius.Medium
+        )
+    }
+    val isPast = rowState == ScheduleRowState.Past
+    val isLive = rowState == ScheduleRowState.Live
+    // The same in-composable check the rest of the screen uses; the in-app
+    // toggle can disagree with the system, so isSystemInDarkTheme is wrong here.
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    // Null unless the row is live: the bar means nothing in any other state,
+    // and an unreadable interval can never be live.
+    val liveProgress = if (isLive && interval != null && nowMinuteOfDay != null) {
+        classProgressFraction(interval, nowMinuteOfDay)
+    } else {
+        null
+    }
+    // Read outside the draw lambda: a DrawScope is not a composable scope.
+    val progressTrack = MaterialTheme.colorScheme.outline
+    val progressFill = MaterialTheme.colorScheme.primary
+    val startText = interval?.let { formatWallClock(it.startMinuteOfDay) }
+        ?: entry.time.trim().ifBlank { "—" }
+    val endText = interval?.let { formatWallClock(it.endMinuteOfDay) }
+    val meta = weeklyClassMeta(entry.location, entry.faculty)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            // Spacing lives on the row now. The list cannot use one global
+            // `spacedBy` because rows inside a day must touch; the first and last
+            // rows carry the 12.dp gap that used to sit between every pair of
+            // items.
+            .padding(
+                top = if (isFirst) AppSpacing.Md else 0.dp,
+                bottom = if (isLast) AppSpacing.Md else 0.dp
+            )
+            // Outline before clip: the stroke is centred on the row's edge, so
+            // clipping first would shave its outer half and render the border at
+            // half its declared weight.
+            .weeklyGroupOutline(
+                position = position,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
+                radius = AppRadius.Medium
+            )
+            .clip(shape)
+            // Surface first, tint second: the live wash is primary over surface,
+            // not over whatever the screen behind the card happens to be. Both
+            // layers sit inside clip/outline, so the group's corners stay clean.
+            .background(MaterialTheme.colorScheme.surface)
+            .then(
+                if (isLive) {
+                    Modifier.background(
+                        MaterialTheme.colorScheme.primary.copy(
+                            alpha = if (dark) 0.12f else 0.08f
+                        )
+                    )
+                } else {
+                    Modifier
+                }
+            )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 60.dp)
+                // Before the padding, so the bar runs edge to edge; the 3.dp
+                // sits inside the row's 10.dp bottom padding, overlaying it
+                // rather than reserving space. The group's clip rounds its
+                // ends on a last/single row, and the bar ends above the
+                // divider, which is drawn after this Row.
+                .drawWithContent {
+                    drawContent()
+                    val fraction = liveProgress ?: return@drawWithContent
+                    val barHeight = 3.dp.toPx()
+                    val top = size.height - barHeight
+                    drawRect(
+                        color = progressTrack,
+                        topLeft = Offset(0f, top),
+                        size = Size(size.width, barHeight)
+                    )
+                    if (fraction > 0f) {
+                        drawRect(
+                            color = progressFill,
+                            topLeft = Offset(0f, top),
+                            size = Size(size.width * fraction, barHeight)
+                        )
+                    }
+                }
+                .padding(horizontal = AppSpacing.Lg, vertical = 10.dp)
+                // Only a finished or live row is announced as one statement;
+                // every other row keeps the plain per-text nodes it has today.
+                .then(
+                    when (rowState) {
+                        ScheduleRowState.Past -> Modifier.semantics(mergeDescendants = true) {
+                            stateDescription = "Finished"
+                        }
+                        ScheduleRowState.Live -> Modifier.semantics(mergeDescendants = true) {
+                            stateDescription = "Live"
+                        }
+                        else -> Modifier
+                    }
+                ),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Intrinsic width bracketed by a minimum: the column stays occupied
+            // for an unreadable time without ever being a fixed width that would
+            // clip "11:35 AM" at a large font scale.
+            Column(
+                modifier = Modifier.widthIn(min = 62.dp),
+                verticalArrangement = Arrangement.spacedBy(1.dp)
             ) {
-                if (entry.location.isNotBlank()) {
-                    InfoLineCompact(
-                        icon = Icons.Rounded.LocationOn,
-                        label = "Room",
-                        value = entry.location,
-                        modifier = Modifier.wrapContentWidth()
+                Text(
+                    text = startText,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    // The muted token, not an alpha guess: it keeps 5:1 in
+                    // light and ~8:1 in dark for small text.
+                    color = if (isPast) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (endText != null) {
+                    Text(
+                        text = endText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-                if (entry.faculty.isNotBlank()) {
-                    InfoLineCompact(
-                        icon = Icons.Rounded.Person,
-                        label = "Faculty",
-                        value = entry.faculty,
-                        modifier = Modifier.weight(1f)
+                if (interval != null) {
+                    // The capsule belongs to the times, not to the row's right
+                    // edge: it is a property of the interval, and keeping it in
+                    // this column means it cannot stretch the text block or
+                    // leave a ragged right margin.
+                    Spacer(Modifier.height(4.dp))
+                    when (rowState) {
+                        ScheduleRowState.Past -> WeeklyFinishedMark()
+                        ScheduleRowState.Live -> WeeklyLiveChip()
+                        else -> WeeklyDurationPill(minutes = interval.durationMinutes)
+                    }
+                }
+            }
+            Spacer(Modifier.width(AppSpacing.Md))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = entry.courseTitle.ifBlank { "Class" },
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (isPast) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (meta.room != null) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = meta.room,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                if (meta.faculty != null) {
+                    Text(
+                        text = meta.faculty,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
-            // The course code / EDP code line used to sit here. Removed: both
-            // fields are still parsed into WeeklyScheduleEntry and still feed
-            // entryKey, so nothing downstream loses them -- they are simply no
-            // longer printed on the collapsed card, which is where the vertical
-            // saving comes from.
         }
+        if (!isLast) {
+            HorizontalDivider(
+                thickness = 0.5.dp,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+            )
+        }
+    }
+}
+
+/**
+ * Duration capsule under the end time.
+ *
+ * Iconless and text-sized: it sits in the time column, where the times already
+ * carry the meaning, so a second glyph would add weight without adding
+ * information. One line, never wrapped — a wrapped capsule would change a row's
+ * height mid-scroll. The spoken label spells the value out because "1h 20m" is
+ * read as letters by a screen reader.
+ */
+@Composable
+private fun WeeklyDurationPill(minutes: Int) {
+    Surface(
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+        contentColor = MaterialTheme.colorScheme.primary,
+        shape = CircleShape,
+        modifier = Modifier.semantics(mergeDescendants = true) {
+            contentDescription = "Duration ${spokenDuration(minutes)}"
+        }
+    ) {
+        Text(
+            text = formatClassDuration(minutes),
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            softWrap = false
+        )
+    }
+}
+
+/**
+ * "Live" chip under the start time, in the duration capsule's slot.
+ *
+ * Same labelSmall line and 2.dp vertical padding as the capsule, so swapping
+ * one for the other cannot change a row's height. The dot is the focus card's
+ * live accent (error) and is decorative — the word "Live" carries the meaning,
+ * so the dot would only repeat it. Text stays primary rather than error: the
+ * small label needs 4.5:1 on this chip, which primary holds in both themes
+ * while error does not (lightly so in light mode).
+ */
+@Composable
+private fun WeeklyLiveChip() {
+    Surface(
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+        contentColor = MaterialTheme.colorScheme.primary,
+        shape = CircleShape
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .background(MaterialTheme.colorScheme.error, CircleShape)
+            )
+            Text(
+                text = "Live",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                softWrap = false
+            )
+        }
+    }
+}
+
+/**
+ * Decorative check for a past row.
+ *
+ * Takes the duration capsule's slot with the same vertical footprint — the
+ * label line height plus the capsule's 2.dp vertical padding — so a row cannot
+ * change height when its class ends. It is narrower than the capsule, so the
+ * time column's width stays driven by the times. "Finished" is carried by the
+ * row's state description, not by a visible word.
+ */
+@Composable
+private fun WeeklyFinishedMark() {
+    val lineHeight = with(LocalDensity.current) {
+        MaterialTheme.typography.labelSmall.lineHeight.toDp()
+    }
+    Box(
+        modifier = Modifier
+            .height(lineHeight + 4.dp)
+            .widthIn(min = 16.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Check,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(16.dp)
+        )
+    }
+}
+
+private enum class WeeklyRowPosition { Single, First, Middle, Last }
+
+/**
+ * Draws only the edges the grouped container owns: the outer outline of the
+ * first/last row and the side rails of the rows between them. Row-to-row edges
+ * are the divider's job, so they are deliberately not stroked here.
+ */
+private fun Modifier.weeklyGroupOutline(
+    position: WeeklyRowPosition,
+    color: Color,
+    radius: Dp
+): Modifier = drawBehind {
+    val stroke = 0.5.dp.toPx()
+    val r = radius.toPx()
+    val half = stroke / 2f
+    val w = size.width
+    val h = size.height
+    val line = Stroke(width = stroke)
+
+    fun corner(cx: Float, cy: Float, startAngle: Float) {
+        drawArc(
+            color = color,
+            startAngle = startAngle,
+            sweepAngle = 90f,
+            useCenter = false,
+            topLeft = Offset(cx - r, cy - r),
+            size = Size(r * 2f, r * 2f),
+            style = line
+        )
+    }
+
+    when (position) {
+        WeeklyRowPosition.Single -> {
+            drawLine(color, Offset(half, r), Offset(half, h - r), stroke)
+            drawLine(color, Offset(w - half, r), Offset(w - half, h - r), stroke)
+            drawLine(color, Offset(r, half), Offset(w - r, half), stroke)
+            drawLine(color, Offset(r, h - half), Offset(w - r, h - half), stroke)
+            corner(r, r, 180f)
+            corner(w - r, r, 270f)
+            corner(w - r, h - r, 0f)
+            corner(r, h - r, 90f)
+        }
+        WeeklyRowPosition.First -> {
+            drawLine(color, Offset(half, r), Offset(half, h), stroke)
+            drawLine(color, Offset(w - half, r), Offset(w - half, h), stroke)
+            drawLine(color, Offset(r, half), Offset(w - r, half), stroke)
+            corner(r, r, 180f)
+            corner(w - r, r, 270f)
+        }
+        WeeklyRowPosition.Middle -> {
+            drawLine(color, Offset(half, 0f), Offset(half, h), stroke)
+            drawLine(color, Offset(w - half, 0f), Offset(w - half, h), stroke)
+        }
+        WeeklyRowPosition.Last -> {
+            drawLine(color, Offset(half, 0f), Offset(half, h - r), stroke)
+            drawLine(color, Offset(w - half, 0f), Offset(w - half, h - r), stroke)
+            drawLine(color, Offset(r, h - half), Offset(w - r, h - half), stroke)
+            corner(r, h - r, 90f)
+            corner(w - r, h - r, 0f)
+        }
+    }
+}
+
+/**
+ * The class row's secondary facts, kept apart rather than joined.
+ *
+ * Faculty names routinely exceed one line ("Noureen Fatima Urf Poon…"), so a
+ * combined "Room · Faculty" line truncated whichever fact came second. Each part
+ * is nullable and the row omits the line entirely when its part is absent, so
+ * there is no orphan separator and no reserved blank line.
+ */
+internal data class WeeklyClassMeta(val room: String?, val faculty: String?)
+
+/**
+ * Normalises the row's room and faculty. Room goes through [formatRoomLabel] so
+ * the portal's own "Room" word is not doubled; faculty is trimmed and blanks
+ * become `null` so the caller can skip the line.
+ */
+internal fun weeklyClassMeta(location: String?, faculty: String?): WeeklyClassMeta =
+    WeeklyClassMeta(
+        room = formatRoomLabel(location),
+        faculty = faculty?.trim()?.takeIf { it.isNotBlank() }
+    )
+
+/**
+ * Spoken form of a class length for the duration pill's accessibility label.
+ *
+ * The visible pill is terser ("1h 20m"), which a screen reader would read out as
+ * "1 h 20 m"; this renders "1 hour 20 minutes" instead. Kept separate from
+ * [formatClassDuration] because the two differ only in voice, not in content.
+ */
+internal fun spokenDuration(minutes: Int): String {
+    val safe = minutes.coerceAtLeast(0)
+    val hours = safe / 60
+    val remainder = safe % 60
+    fun part(value: Int, unit: String): String = "$value $unit" + if (value == 1) "" else "s"
+    return when {
+        hours == 0 -> part(remainder, "minute")
+        remainder == 0 -> part(hours, "hour")
+        else -> "${part(hours, "hour")} ${part(remainder, "minute")}"
     }
 }
 
@@ -2644,75 +3120,6 @@ private fun formatTime12Hour(time: String): String = timeTokenPattern.replace(ti
         "PM"
     }
     "$hour12:${minute.toString().padStart(2, '0')} $period"
-}
-
-private fun scheduleStartMinutes(time: String): Int {
-    val match = timeTokenPattern.find(time) ?: return Int.MAX_VALUE
-    val hour = match.groupValues[1].toIntOrNull() ?: return Int.MAX_VALUE
-    val minute = match.groupValues[2].toIntOrNull() ?: return Int.MAX_VALUE
-    if (hour !in 0..23 || minute !in 0..59) return Int.MAX_VALUE
-
-    val suffix = match.groupValues[3].replace(".", "").uppercase()
-    val hour24 = when (suffix) {
-        "AM" -> hour % 12
-        "PM" -> (hour % 12) + 12
-        else -> hour % 24
-    }
-    return hour24 * 60 + minute
-}
-
-private fun scheduleDurationLabel(time: String): String? {
-    val tokens = timeTokenPattern.findAll(time).take(2).toList()
-    if (tokens.size < 2) return null
-
-    val first = tokens[0]
-    val second = tokens[1]
-    val firstHour = first.groupValues[1].toIntOrNull() ?: return null
-    val secondHour = second.groupValues[1].toIntOrNull() ?: return null
-    val firstSuffix = first.groupValues[3].replace(".", "").uppercase()
-    val secondSuffix = second.groupValues[3].replace(".", "").uppercase()
-
-    val inferredFirstSuffix = when {
-        firstSuffix == "AM" || firstSuffix == "PM" -> firstSuffix
-        firstHour > 12 -> ""
-        secondSuffix != "AM" && secondSuffix != "PM" -> ""
-        firstHour % 12 > secondHour % 12 -> if (secondSuffix == "AM") "PM" else "AM"
-        else -> secondSuffix
-    }
-    val inferredSecondSuffix = when {
-        secondSuffix == "AM" || secondSuffix == "PM" -> secondSuffix
-        secondHour > 12 -> ""
-        firstSuffix != "AM" && firstSuffix != "PM" -> ""
-        secondHour % 12 < firstHour % 12 -> if (firstSuffix == "AM") "PM" else "AM"
-        else -> firstSuffix
-    }
-
-    fun minutes(token: MatchResult, inferredSuffix: String): Int? {
-        val hour = token.groupValues[1].toIntOrNull() ?: return null
-        val minute = token.groupValues[2].toIntOrNull() ?: return null
-        if (hour !in 0..23 || minute !in 0..59) return null
-        val suffix = token.groupValues[3].replace(".", "").uppercase().ifBlank { inferredSuffix }
-        val hour24 = when (suffix) {
-            "AM" -> hour % 12
-            "PM" -> (hour % 12) + 12
-            else -> hour % 24
-        }
-        return hour24 * 60 + minute
-    }
-
-    val start = minutes(first, inferredFirstSuffix) ?: return null
-    var end = minutes(second, inferredSecondSuffix) ?: return null
-    if (end < start) end += 24 * 60
-    val durationMinutes = end - start
-    if (durationMinutes !in 1..(12 * 60)) return null
-
-    val hours = durationMinutes / 60
-    val minutes = durationMinutes % 60
-    return when {
-        hours == 0 -> "$minutes min"
-        minutes == 0 -> "$hours hr${if (hours == 1) "" else "s"}"
-        else -> "$hours hr${if (hours == 1) "" else "s"} $minutes min"
-    }
 }
 
 @Composable
@@ -4086,22 +4493,6 @@ private fun DueBadge(status: DueInfo) {
 }
 
 @Composable
-private fun DurationBadge(duration: String) {
-    Surface(
-        color = MaterialTheme.colorScheme.primaryContainer,
-        shape = CircleShape
-    ) {
-        Text(
-            text = duration,
-            modifier = Modifier.padding(horizontal = AppSpacing.Md, vertical = AppSpacing.Sm),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onPrimaryContainer,
-            fontWeight = FontWeight.SemiBold
-        )
-    }
-}
-
-@Composable
 private fun ScreenHeading(
     title: String,
     subtitle: String,
@@ -4176,68 +4567,6 @@ private fun InfoLine(icon: ImageVector, label: String, value: String) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(value, style = MaterialTheme.typography.bodyMedium)
-        }
-    }
-}
-
-/**
- * Single-line sibling of [InfoLine] for a constrained-width slot.
- *
- * Deliberately a SEPARATE composable rather than a defaulted parameter on
- * [InfoLine]: the shared one is the layout of record for the attendance,
- * transcript and voucher cards, and its unbounded vertical growth is correct
- * there. Changing it in place would restyle four other screens.
- *
- * Two differences make this safe to place side-by-side:
- *  - The value [Text] is capped at one line with an ellipsis. An unbounded
- *    `Text` wraps, which silently grows the card instead of truncating a long
- *    faculty name.
- *  - Neither the [Row] nor the inner [Column] forces its own width. Both take
- *    the incoming constraint as-is, so the caller decides the allocation
- *    entirely: `Modifier.weight(1f)` to absorb the leftover space, or
- *    `Modifier.wrapContentWidth()` to shrink to intrinsic content.
- *
- * Why neither forces a width: an internal `fillMaxWidth()` would override a
- * caller's `wrapContentWidth()` and make the block swallow the whole row, and an
- * internal `Column(weight(1f))` would do the same, because a weighted child with
- * no weighted sibling receives all remaining space. Truncation does not depend
- * on either: a `Text` capped at one line ellipsizes against whatever `maxWidth`
- * the Row's constraint imposes, which the caller's weight already bounds.
- */
-@Composable
-private fun InfoLineCompact(
-    icon: ImageVector,
-    label: String,
-    value: String,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            icon,
-            null,
-            modifier = Modifier.size(18.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        // AppSpacing.Md, not the raw 10.dp this was. At 10.dp the glyph sat
-        // closer to its own label than the two blocks sit to each other, so the
-        // icons read as crowded even when the inter-block gap was correct.
-        // Tokenised so it no longer drifts from the spacing scale.
-        Spacer(Modifier.width(AppSpacing.Md))
-        Column {
-            Text(
-                label,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                value,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
         }
     }
 }
