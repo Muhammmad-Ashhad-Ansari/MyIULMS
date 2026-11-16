@@ -56,6 +56,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -156,7 +157,9 @@ import com.example.myiulms.ui.dashboard.groupScheduleByDay
 import com.example.myiulms.ui.dashboard.liveSecondsRemaining
 import com.example.myiulms.ui.dashboard.minuteOfDay
 import com.example.myiulms.ui.dashboard.nextFocusTickDelayMillis
+import com.example.myiulms.ui.dashboard.formatRoomLabel
 import com.example.myiulms.ui.dashboard.normalizeDay
+import com.example.myiulms.ui.dashboard.parseScheduleInterval
 import com.example.myiulms.ui.dashboard.resolveScheduleFocus
 import com.example.myiulms.ui.dashboard.scheduleFreshnessNote
 import com.example.myiulms.ui.dashboard.ScheduleTips
@@ -1736,7 +1739,14 @@ private fun SchedulesScreen(
                     Column {
                         // No day chips here, so the line sits under the sub-tab row.
                         FreshnessLine(freshnessNote)
-                        ExamScheduleContent(examSchedule, screenState, onRetry, onPullRefresh, manualPull)
+                        ExamScheduleContent(
+                            examSchedule,
+                            screenState,
+                            onRetry,
+                            onPullRefresh,
+                            manualPull,
+                            studentName
+                        )
                     }
                 }
             }
@@ -1750,11 +1760,24 @@ private fun ExamScheduleContent(
     screenState: ScreenLoadState,
     onRetry: () -> Unit,
     onPullRefresh: () -> Unit,
-    manualPull: ManualPull
+    manualPull: ManualPull,
+    studentName: String?
 ) {
     if (schedule == null) {
         LoadStateContent("Loading exam schedule…", screenState, onRetry)
         return
+    }
+
+    // Composition-scoped Activity context for the share intent; see the weekly
+    // schedule's share action for why it is not hoisted into the ViewModel.
+    val shareContext = LocalContext.current
+    val shareScope = rememberCoroutineScope()
+
+    // Campus "today", not the device zone: a student abroad must see the same
+    // countdown as one on campus.
+    val today = remember { LocalDate.now(CampusZone) }
+    val nextExam = remember(schedule.entries, today) {
+        nextExamIndex(schedule.entries, today, minuteOfDay())
     }
 
     // Data-present branch only: `loading` here always means a refresh, never the first load.
@@ -1776,24 +1799,31 @@ private fun ExamScheduleContent(
             item {
                 ScreenHeading(
                     title = "Exam schedule",
-                    subtitle = distinctSubtitle(schedule.title, "Exam schedule", "Dates, times and rooms")
-                )
-            }
-
-            if (!schedule.notice.isNullOrBlank()) {
-                item {
-                    NoticeCard(message = schedule.notice)
-                }
-            }
-
-            // With no exams the empty state below says it once; no "0" card.
-            if (schedule.entries.isNotEmpty()) item {
-                HeroMetricCard(
-                    label = "Scheduled exams",
-                    value = "${schedule.entries.size}",
-                    helper = if (schedule.entries.isEmpty()) "No scheduled exams"
-                    else "${schedule.entries.size} course examination${if (schedule.entries.size == 1) "" else "s"}",
-                    icon = Icons.Rounded.Event
+                    subtitle = distinctSubtitle(schedule.title, "Exam schedule", "Dates, times and rooms"),
+                    // Same slot, glyph and muted tint as the other three screens.
+                    action = {
+                        IconButton(
+                            onClick = {
+                                shareScope.launch {
+                                    runCatching {
+                                        shareExamScheduleAsPng(shareContext, studentName, schedule)
+                                    }.onFailure {
+                                        Toast.makeText(
+                                            shareContext,
+                                            "Could not share exam schedule.",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                }
+                            }
+                        ) {
+                            Icon(
+                                Icons.Rounded.Share,
+                                contentDescription = "Share exam schedule",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 )
             }
 
@@ -1806,8 +1836,25 @@ private fun ExamScheduleContent(
                     )
                 }
             } else {
-                items(schedule.entries) { entry ->
-                    ExamScheduleCard(entry = entry)
+                itemsIndexed(schedule.entries) { index, entry ->
+                    ExamScheduleCard(entry = entry, isNext = index == nextExam, today = today)
+                }
+            }
+
+            // The portal's tentative-schedule warning closes the list, as on the
+            // Transcript screen: it stays readable without competing with the
+            // timetable itself.
+            if (!schedule.notice.isNullOrBlank()) {
+                item {
+                    Text(
+                        text = schedule.notice,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = AppSpacing.Xs, bottom = AppSpacing.Sm),
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
@@ -2927,132 +2974,239 @@ private fun AbsenceLimitsInfoDialog(onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun NoticeCard(message: String) {
-    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val bg = if (dark) WarningContainerDark else WarningContainerLight
-    val fg = if (dark) WarningForegroundDark else WarningForegroundLight
+private fun ExamScheduleCard(
+    entry: ExamScheduleEntry,
+    isNext: Boolean,
+    today: LocalDate
+) {
+    val date = parsePortalDate(entry.dayAndDate)
+    val daysUntil = date?.let { ChronoUnit.DAYS.between(today, it) }
+    val interval = parseScheduleInterval(entry.time)
+    val timeText = interval
+        ?.let { formatExamTimeRange(it.startMinuteOfDay, it.endMinuteOfDay) }
+        ?: entry.time.trim()
+    val durationText = interval?.let { formatExamDuration(it.durationMinutes) }.orEmpty()
 
-    Surface(
+    Card(
         modifier = Modifier.fillMaxWidth(),
-        color = bg,
-        shape = RoundedCornerShape(AppRadius.Medium)
+        shape = RoundedCornerShape(AppRadius.Large),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        border = if (isNext) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null
     ) {
-        Row(
-            modifier = Modifier.padding(14.dp),
-            verticalAlignment = Alignment.Top
+        Column(
+            modifier = Modifier.padding(horizontal = AppSpacing.Lg, vertical = AppSpacing.Md),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Icon(
-                Icons.Rounded.WarningAmber,
-                contentDescription = null,
-                tint = fg,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(Modifier.width(10.dp))
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodyMedium,
-                color = fg
-            )
+            if (isNext || daysUntil != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (isNext) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            shape = CircleShape
+                        ) {
+                            Text(
+                                text = "Next exam",
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                    if (daysUntil != null) {
+                        Text(
+                            text = examCountdown(daysUntil),
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(start = AppSpacing.Sm),
+                            textAlign = TextAlign.End,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (isNext) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.Md),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ExamDateBadge(date = date, highlighted = isNext)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = entry.courseTitle.ifBlank { "Exam" },
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    // Course code stays a quiet caption under the subject, as on
+                    // the Attendance card.
+                    if (entry.edpCode.isNotBlank()) {
+                        Text(
+                            text = entry.edpCode,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+
+            if (timeText.isNotBlank()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Rounded.Schedule,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(AppSpacing.Sm))
+                    // Interval and duration share one line; the duration is the
+                    // muted tail instead of a second metadata row.
+                    Text(
+                        text = timeText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (durationText.isNotBlank()) {
+                        Text(
+                            text = " · $durationText",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+
+            val room = formatRoomLabel(entry.location)
+            val faculty = formatShareName(entry.faculty)
+            if (room != null || faculty.isNotBlank()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(AppSpacing.Sm),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (room != null) {
+                        ExamChip(icon = Icons.Rounded.LocationOn, text = room)
+                    }
+                    if (faculty.isNotBlank()) {
+                        ExamChip(
+                            icon = Icons.Rounded.Person,
+                            text = faculty,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun ExamScheduleCard(entry: ExamScheduleEntry) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(AppRadius.Large),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+private fun ExamDateBadge(date: LocalDate?, highlighted: Boolean) {
+    val muted = if (highlighted) {
+        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f)
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Surface(
+        color = if (highlighted) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant
+        },
+        shape = RoundedCornerShape(AppRadius.Medium),
+        modifier = Modifier.width(58.dp)
     ) {
-        Column(Modifier.padding(AppSpacing.Lg)) {
-            Row(verticalAlignment = Alignment.Top) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(1.dp)
+        ) {
+            if (date == null) {
                 Text(
-                    text = entry.courseTitle,
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+                    text = "TBA",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = muted,
+                    maxLines = 1
                 )
-                if (entry.edpCode.isNotBlank()) {
-                    Spacer(Modifier.width(8.dp))
-                    Surface(
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        shape = RoundedCornerShape(AppRadius.Small)
-                    ) {
-                        Text(
-                            text = "EDP: ${entry.edpCode}",
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
+            } else {
+                Text(
+                    text = date.dayOfWeek.name.take(3),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = muted,
+                    maxLines = 1
+                )
+                Text(
+                    text = date.dayOfMonth.toString(),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = if (highlighted) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                    maxLines = 1
+                )
+                Text(
+                    text = date.month.name.take(3),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = muted,
+                    maxLines = 1
+                )
             }
+        }
+    }
+}
 
-            Spacer(Modifier.height(14.dp))
-
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(AppRadius.Medium),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        modifier = Modifier.weight(1f),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Rounded.CalendarToday,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = entry.dayAndDate,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-
-                    if (entry.time.isNotBlank()) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Rounded.Schedule,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = formatTime12Hour(entry.time),
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            if (entry.location.isNotBlank()) {
-                InfoLine(Icons.Rounded.MeetingRoom, "Location / Room", entry.location)
-                Spacer(Modifier.height(8.dp))
-            }
-
-            if (entry.faculty.isNotBlank()) {
-                InfoLine(Icons.Rounded.Person, "Faculty", entry.faculty)
-            }
+@Composable
+private fun ExamChip(icon: ImageVector, text: String, modifier: Modifier = Modifier) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = CircleShape,
+        modifier = modifier
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }

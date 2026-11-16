@@ -134,6 +134,60 @@ suspend fun shareScheduleAsPng(
 }
 
 /**
+ * Exam schedule as a shareable image.
+ *
+ * Same canvas, palette, footer and `ACTION_SEND` handoff as the weekly
+ * schedule: only the row model differs. Dates use the compact portal form
+ * ("Sun, 22 Nov 2026") so all five columns fit without truncation.
+ */
+suspend fun shareExamScheduleAsPng(
+    context: Context,
+    studentName: String?,
+    schedule: ExamSchedule,
+    now: LocalDate = LocalDate.now()
+) {
+    val entries = schedule.entries
+    shareAcademicTable(
+        context = context,
+        filePrefix = "MyIULMS_ExamSchedule",
+        title = "Exam Schedule",
+        subtitle = schedule.title.trim().ifBlank { "Dates, times and rooms" },
+        studentName = studentName,
+        metricLabel = "Exams",
+        metricValue = entries.size.toString(),
+        headers = listOf("Date", "Time", "Course", "Faculty", "Room"),
+        rows = entries.map { examScheduleRow(it) },
+        columnWidths = listOf(.24f, .20f, .28f, .20f, .08f),
+        generatedOn = now
+    )
+}
+
+/**
+ * One exam row as the five display strings the table renderer draws.
+ *
+ * Columns: Date, Time, Course, Faculty, Room. The time is normalised through
+ * the same interval parser as [scheduleRow]; a row the parser cannot read
+ * keeps the portal's own text. Blank optional fields degrade to an em dash.
+ */
+internal fun examScheduleRow(entry: ExamScheduleEntry): List<String> {
+    val interval = parseScheduleInterval(entry.time)
+    val time = if (interval == null) {
+        entry.time.trim().ifBlank { "TBA" }
+    } else {
+        "${formatWallClock(interval.startMinuteOfDay)} - " +
+            formatWallClock(interval.endMinuteOfDay)
+    }
+
+    return listOf(
+        shortPortalDate(entry.dayAndDate),
+        time,
+        entry.courseTitle.trim().ifBlank { "Exam" },
+        formatShareName(entry.faculty.trim()).ifBlank { "—" },
+        entry.location.trim().ifBlank { "—" }
+    )
+}
+
+/**
  * One schedule row as the five display strings the table renderer draws.
  *
  * Columns: Day, Time, Course, Faculty, Room.
@@ -363,7 +417,7 @@ private fun drawEllipsizedText(
     canvas.drawText(text, x, baseline, paint)
 }
 
-private fun formatShareName(name: String): String =
+internal fun formatShareName(name: String): String =
     name.trim()
         .lowercase()
         .split(Regex("\\s+"))
