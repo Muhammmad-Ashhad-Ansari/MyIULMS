@@ -1805,7 +1805,7 @@ private fun ExamScheduleContent(
                 end = ListGutter,
                 bottom = listBottomClearance()
             ),
-            verticalArrangement = Arrangement.spacedBy(AppSpacing.Md)
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.Sm)
         ) {
             item {
                 ScreenHeading(
@@ -3042,8 +3042,8 @@ private fun ExamScheduleCard(
         border = if (isNext) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = AppSpacing.Lg, vertical = AppSpacing.Md),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            modifier = Modifier.padding(horizontal = AppSpacing.Md, vertical = AppSpacing.Sm),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             if (isNext || daysUntil != null) {
                 Row(
@@ -3173,7 +3173,7 @@ private fun ExamStatusChip(live: Boolean) {
         shape = CircleShape
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (live) {
@@ -3220,7 +3220,7 @@ private fun ExamDateBadge(date: LocalDate?, highlighted: Boolean) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 6.dp),
+                .padding(vertical = 3.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(1.dp)
         ) {
@@ -3269,7 +3269,7 @@ private fun ExamChip(icon: ImageVector, text: String, modifier: Modifier = Modif
         modifier = modifier
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(

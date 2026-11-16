@@ -137,8 +137,11 @@ suspend fun shareScheduleAsPng(
  * Exam schedule as a shareable image.
  *
  * Same canvas, palette, footer and `ACTION_SEND` handoff as the weekly
- * schedule: only the row model differs. Dates use the compact portal form
- * ("Sun, 22 Nov 2026") so all five columns fit without truncation.
+ * schedule: only the row model differs. Four columns keep the image minimal:
+ * date, time, course and location. Faculty is left out because the exam itself
+ * matters more than who invigilates it. The course column takes the widest
+ * share of the table and wraps to two lines, so full titles such as
+ * "PARALLEL & DISTRIBUTED COMPUTING" never ellipsize.
  */
 suspend fun shareExamScheduleAsPng(
     context: Context,
@@ -155,19 +158,22 @@ suspend fun shareExamScheduleAsPng(
         studentName = studentName,
         metricLabel = "Exams",
         metricValue = entries.size.toString(),
-        headers = listOf("Date", "Time", "Course", "Faculty", "Room"),
+        headers = listOf("Date", "Time", "Course", "Location"),
         rows = entries.map { examScheduleRow(it) },
-        columnWidths = listOf(.24f, .20f, .28f, .20f, .08f),
-        generatedOn = now
+        columnWidths = listOf(.20f, .22f, .42f, .16f),
+        generatedOn = now,
+        wrapColumn = 2
     )
 }
 
 /**
- * One exam row as the five display strings the table renderer draws.
+ * One exam row as the four display strings the table renderer draws.
  *
- * Columns: Date, Time, Course, Faculty, Room. The time is normalised through
- * the same interval parser as [scheduleRow]; a row the parser cannot read
- * keeps the portal's own text. Blank optional fields degrade to an em dash.
+ * Columns: Date, Time, Course, Location. The time is normalised through the
+ * same interval parser as [scheduleRow]; a row the parser cannot read keeps
+ * the portal's own text. The course title is passed through untouched so the
+ * renderer can wrap it instead of cutting it. Blank optional fields degrade to
+ * an em dash.
  */
 internal fun examScheduleRow(entry: ExamScheduleEntry): List<String> {
     val interval = parseScheduleInterval(entry.time)
@@ -182,7 +188,6 @@ internal fun examScheduleRow(entry: ExamScheduleEntry): List<String> {
         shortPortalDate(entry.dayAndDate),
         time,
         entry.courseTitle.trim().ifBlank { "Exam" },
-        formatShareName(entry.faculty.trim()).ifBlank { "—" },
         entry.location.trim().ifBlank { "—" }
     )
 }
@@ -232,7 +237,8 @@ private suspend fun shareAcademicTable(
     headers: List<String>,
     rows: List<List<String>>,
     columnWidths: List<Float>,
-    generatedOn: LocalDate? = null
+    generatedOn: LocalDate? = null,
+    wrapColumn: Int? = null
 ) {
     val headerHeight = 470
     val footerHeight = 170
@@ -330,17 +336,31 @@ private suspend fun shareAcademicTable(
                 SHARE_WIDTH - MARGIN - colStarts[colIndex] - 18f
             }
 
-            drawEllipsizedText(
-                canvas = canvas,
-                paint = paint,
-                value = value,
-                x = colStarts[colIndex] + 18f,
-                baseline = yTop + 55f,
-                maxWidth = maxWidth,
-                size = if (colIndex == 0) 20f else 21f,
-                color = text,
-                bold = colIndex == 2
-            )
+            if (colIndex == wrapColumn) {
+                drawWrappedText(
+                    canvas = canvas,
+                    paint = paint,
+                    value = value,
+                    x = colStarts[colIndex] + 18f,
+                    rowTop = yTop,
+                    maxWidth = maxWidth,
+                    size = if (colIndex == 0) 20f else 21f,
+                    color = text,
+                    bold = colIndex == 2
+                )
+            } else {
+                drawEllipsizedText(
+                    canvas = canvas,
+                    paint = paint,
+                    value = value,
+                    x = colStarts[colIndex] + 18f,
+                    baseline = yTop + 55f,
+                    maxWidth = maxWidth,
+                    size = if (colIndex == 0) 20f else 21f,
+                    color = text,
+                    bold = colIndex == 2
+                )
+            }
         }
     }
 
@@ -404,17 +424,66 @@ private fun drawEllipsizedText(
     paint.typeface = if (bold) android.graphics.Typeface.DEFAULT_BOLD
     else android.graphics.Typeface.DEFAULT
 
+    canvas.drawText(ellipsize(paint, value.replace("\n", " ").trim(), maxWidth), x, baseline, paint)
+}
+
+/**
+ * Draws [value] on one line when it fits, otherwise over two lines inside the
+ * same row. Words are never broken; only a second line that still overflows is
+ * ellipsized, so a long course title keeps every word it can.
+ */
+private fun drawWrappedText(
+    canvas: Canvas,
+    paint: Paint,
+    value: String,
+    x: Float,
+    rowTop: Float,
+    maxWidth: Float,
+    size: Float,
+    color: Int,
+    bold: Boolean
+) {
+    paint.textSize = size
+    paint.color = color
+    paint.typeface = if (bold) android.graphics.Typeface.DEFAULT_BOLD
+    else android.graphics.Typeface.DEFAULT
+
     val safe = value.replace("\n", " ").trim()
-    val text = if (paint.measureText(safe) <= maxWidth) {
-        safe
-    } else {
-        var cut = safe
-        while (cut.length > 1 && paint.measureText("$cut…") > maxWidth) {
-            cut = cut.dropLast(1)
-        }
-        "$cut…"
+    if (paint.measureText(safe) <= maxWidth) {
+        canvas.drawText(safe, x, rowTop + 55f, paint)
+        return
     }
-    canvas.drawText(text, x, baseline, paint)
+
+    // Greedy word wrap. A single word wider than the column still lands on a
+    // line of its own and gets ellipsized below.
+    val lines = mutableListOf<String>()
+    var current = ""
+    safe.split(' ').filter { it.isNotEmpty() }.forEach { word ->
+        val candidate = if (current.isEmpty()) word else "$current $word"
+        if (current.isEmpty() || paint.measureText(candidate) <= maxWidth) {
+            current = candidate
+        } else {
+            lines += current
+            current = word
+        }
+    }
+    if (current.isNotEmpty()) lines += current
+
+    val first = if (lines.size == 1) ellipsize(paint, lines[0], maxWidth) else lines[0]
+    canvas.drawText(first, x, rowTop + 36f, paint)
+    if (lines.size > 1) {
+        val tail = ellipsize(paint, lines.drop(1).joinToString(" "), maxWidth)
+        canvas.drawText(tail, x, rowTop + 64f, paint)
+    }
+}
+
+private fun ellipsize(paint: Paint, text: String, maxWidth: Float): String {
+    if (paint.measureText(text) <= maxWidth) return text
+    var cut = text
+    while (cut.length > 1 && paint.measureText("$cut…") > maxWidth) {
+        cut = cut.dropLast(1)
+    }
+    return "$cut…"
 }
 
 internal fun formatShareName(name: String): String =
