@@ -83,6 +83,7 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -158,6 +159,7 @@ import com.example.myiulms.ui.dashboard.liveSecondsRemaining
 import com.example.myiulms.ui.dashboard.minuteOfDay
 import com.example.myiulms.ui.dashboard.nextFocusTickDelayMillis
 import com.example.myiulms.ui.dashboard.formatRoomLabel
+import com.example.myiulms.ui.dashboard.formatWallClock
 import com.example.myiulms.ui.dashboard.normalizeDay
 import com.example.myiulms.ui.dashboard.parseScheduleInterval
 import com.example.myiulms.ui.dashboard.resolveScheduleFocus
@@ -1776,8 +1778,17 @@ private fun ExamScheduleContent(
     // Campus "today", not the device zone: a student abroad must see the same
     // countdown as one on campus.
     val today = remember { LocalDate.now(CampusZone) }
-    val nextExam = remember(schedule.entries, today) {
-        nextExamIndex(schedule.entries, today, minuteOfDay())
+    val nowMinute = remember { minuteOfDay() }
+    // Passed exams drop below the live/upcoming ones; the UI dims them and
+    // labels the break so the reorder never looks like lost data.
+    val orderedEntries = remember(schedule.entries, today, nowMinute) {
+        orderExamsUpcomingFirst(schedule.entries, today, nowMinute)
+    }
+    val nextExam = remember(orderedEntries, today, nowMinute) {
+        nextExamIndex(orderedEntries, today, nowMinute)
+    }
+    val upcomingCount = remember(orderedEntries, today, nowMinute) {
+        orderedEntries.count { !examHasPassed(it, today, nowMinute) }
     }
 
     // Data-present branch only: `loading` here always means a refresh, never the first load.
@@ -1836,8 +1847,32 @@ private fun ExamScheduleContent(
                     )
                 }
             } else {
-                itemsIndexed(schedule.entries) { index, entry ->
-                    ExamScheduleCard(entry = entry, isNext = index == nextExam, today = today)
+                itemsIndexed(orderedEntries.take(upcomingCount)) { index, entry ->
+                    ExamScheduleCard(
+                        entry = entry,
+                        isNext = index == nextExam,
+                        today = today,
+                        nowMinuteOfDay = nowMinute
+                    )
+                }
+                if (upcomingCount < orderedEntries.size) {
+                    item {
+                        Text(
+                            text = "Completed",
+                            modifier = Modifier.padding(top = AppSpacing.Xs),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    items(orderedEntries.drop(upcomingCount)) { entry ->
+                        ExamScheduleCard(
+                            entry = entry,
+                            isNext = false,
+                            today = today,
+                            nowMinuteOfDay = nowMinute
+                        )
+                    }
                 }
             }
 
@@ -2977,7 +3012,8 @@ private fun AbsenceLimitsInfoDialog(onDismiss: () -> Unit) {
 private fun ExamScheduleCard(
     entry: ExamScheduleEntry,
     isNext: Boolean,
-    today: LocalDate
+    today: LocalDate,
+    nowMinuteOfDay: Int?
 ) {
     val date = parsePortalDate(entry.dayAndDate)
     val daysUntil = date?.let { ChronoUnit.DAYS.between(today, it) }
@@ -2986,12 +3022,22 @@ private fun ExamScheduleCard(
         ?.let { formatExamTimeRange(it.startMinuteOfDay, it.endMinuteOfDay) }
         ?: entry.time.trim()
     val durationText = interval?.let { formatExamDuration(it.durationMinutes) }.orEmpty()
+    val phase = examPhase(entry, today, nowMinuteOfDay)
+    val inProgress = phase == ExamPhase.InProgress
+    val passed = phase == ExamPhase.Passed
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        // Passed cards stay readable but stop competing with the live ones.
+        modifier = Modifier
+            .fillMaxWidth()
+            .alpha(if (passed) 0.55f else 1f),
         shape = RoundedCornerShape(AppRadius.Large),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
+            containerColor = if (passed) {
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            } else {
+                MaterialTheme.colorScheme.surface
+            }
         ),
         border = if (isNext) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null
     ) {
@@ -3004,30 +3050,26 @@ private fun ExamScheduleCard(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (isNext) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                            shape = CircleShape
-                        ) {
-                            Text(
-                                text = "Next exam",
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
+                    when {
+                        inProgress -> ExamStatusChip(live = true)
+                        isNext -> ExamStatusChip(live = false)
                     }
-                    if (daysUntil != null) {
+                    val status = when {
+                        inProgress -> interval?.let { "until " + formatWallClock(it.endMinuteOfDay) }
+                        passed -> "Passed"
+                        daysUntil != null -> examCountdown(daysUntil)
+                        else -> null
+                    }
+                    if (status != null) {
                         Text(
-                            text = examCountdown(daysUntil),
+                            text = status,
                             modifier = Modifier
                                 .weight(1f)
                                 .padding(start = AppSpacing.Sm),
                             textAlign = TextAlign.End,
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (isNext) {
+                            color = if (isNext || inProgress) {
                                 MaterialTheme.colorScheme.primary
                             } else {
                                 MaterialTheme.colorScheme.onSurfaceVariant
@@ -3119,6 +3161,42 @@ private fun ExamScheduleCard(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ExamStatusChip(live: Boolean) {
+    Surface(
+        color = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        shape = CircleShape
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (live) {
+                val pulse = rememberInfiniteTransition(label = "exam-live")
+                val dotAlpha by pulse.animateFloat(
+                    initialValue = 0.35f,
+                    targetValue = 1f,
+                    animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+                    label = "exam-live-dot"
+                )
+                Box(
+                    Modifier
+                        .padding(end = 6.dp)
+                        .size(6.dp)
+                        .alpha(dotAlpha)
+                        .background(MaterialTheme.colorScheme.onPrimaryContainer, CircleShape)
+                )
+            }
+            Text(
+                text = if (live) "In progress" else "Next exam",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold
+            )
         }
     }
 }

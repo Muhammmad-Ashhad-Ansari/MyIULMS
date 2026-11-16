@@ -86,6 +86,36 @@ class PortalFormatTest {
         assertNull(nextExamIndex(entries, LocalDate.of(2026, 12, 1)))
     }
 
+    @Test
+    fun `exam phase follows the clock on exam day`() {
+        val entry = examEntry("Sunday, Nov 22nd, 2026", "9:00 AM - 10:30 AM", "AI")
+        val examDay = LocalDate.of(2026, 11, 22)
+
+        assertEquals(ExamPhase.Upcoming, examPhase(entry, examDay, nowMinuteOfDay = 8 * 60))
+        assertEquals(ExamPhase.InProgress, examPhase(entry, examDay, nowMinuteOfDay = 9 * 60 + 30))
+        assertEquals(ExamPhase.Passed, examPhase(entry, examDay, nowMinuteOfDay = 10 * 60 + 30))
+        assertEquals(ExamPhase.Passed, examPhase(entry, LocalDate.of(2026, 11, 23)))
+        assertEquals(ExamPhase.Upcoming, examPhase(entry, LocalDate.of(2026, 11, 16)))
+        // An unusable date is never hidden behind a "Passed" label.
+        assertEquals(ExamPhase.Upcoming, examPhase(examEntry("TBA", "TBA", "X"), examDay))
+    }
+
+    @Test
+    fun `passed exams sink below upcoming ones`() {
+        val entries = listOf(
+            examEntry("Tuesday, Nov 10th, 2026", "9:00 AM - 10:30 AM", "Passed older"),
+            examEntry("Sunday, Nov 29th, 2026", "9:00 AM - 10:30 AM", "Later"),
+            examEntry("Sunday, Nov 15th, 2026", "9:00 AM - 10:30 AM", "Passed recent"),
+            examEntry("Sunday, Nov 22nd, 2026", "9:00 AM - 10:30 AM", "Next")
+        )
+
+        val ordered = orderExamsUpcomingFirst(entries, LocalDate.of(2026, 11, 16))
+        assertEquals(
+            listOf("Next", "Later", "Passed recent", "Passed older"),
+            ordered.map { it.courseTitle }
+        )
+    }
+
     private fun examEntry(day: String, time: String, title: String) = ExamScheduleEntry(
         dayAndDate = day,
         time = time,

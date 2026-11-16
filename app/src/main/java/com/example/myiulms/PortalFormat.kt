@@ -63,6 +63,60 @@ fun examCountdown(daysUntil: Long): String = when {
     else -> "$daysUntil days left"
 }
 
+/** Where an exam sits relative to now. */
+enum class ExamPhase { Upcoming, InProgress, Passed }
+
+/**
+ * Resolves an exam's phase. A date alone decides most cases; on exam day the
+ * time range decides, and an unparsable time keeps the exam [ExamPhase.Upcoming]
+ * rather than hiding it behind a "Passed" label we cannot justify.
+ */
+fun examPhase(
+    entry: ExamScheduleEntry,
+    today: LocalDate,
+    nowMinuteOfDay: Int? = null
+): ExamPhase {
+    val date = parsePortalDate(entry.dayAndDate) ?: return ExamPhase.Upcoming
+    if (date.isBefore(today)) return ExamPhase.Passed
+    if (date.isAfter(today)) return ExamPhase.Upcoming
+    val interval = parseScheduleInterval(entry.time) ?: return ExamPhase.Upcoming
+    val now = nowMinuteOfDay ?: return ExamPhase.Upcoming
+    return when {
+        now >= interval.endMinuteOfDay -> ExamPhase.Passed
+        now >= interval.startMinuteOfDay -> ExamPhase.InProgress
+        else -> ExamPhase.Upcoming
+    }
+}
+
+fun examHasPassed(
+    entry: ExamScheduleEntry,
+    today: LocalDate,
+    nowMinuteOfDay: Int? = null
+): Boolean = examPhase(entry, today, nowMinuteOfDay) == ExamPhase.Passed
+
+/** Chronological position of an exam; undated entries sort after dated ones. */
+private fun examSortKey(entry: ExamScheduleEntry): Long {
+    val date = parsePortalDate(entry.dayAndDate) ?: return Long.MAX_VALUE
+    val start = parseScheduleInterval(entry.time)?.startMinuteOfDay ?: 0
+    return date.toEpochDay() * 1440L + start
+}
+
+/**
+ * Upcoming and in-progress exams first in chronological order, passed exams
+ * after them with the most recent first. Passed cards are dimmed in the UI, so
+ * they must not sit between two live ones.
+ */
+fun orderExamsUpcomingFirst(
+    entries: List<ExamScheduleEntry>,
+    today: LocalDate,
+    nowMinuteOfDay: Int? = null
+): List<ExamScheduleEntry> {
+    val (passed, upcoming) = entries.partition {
+        examHasPassed(it, today, nowMinuteOfDay)
+    }
+    return upcoming.sortedBy(::examSortKey) + passed.sortedByDescending(::examSortKey)
+}
+
 /**
  * Index of the nearest exam that has not passed: earliest date at or after
  * [today], earliest start time on a shared date. [nowMinuteOfDay] lets a
@@ -75,19 +129,12 @@ fun nextExamIndex(
     nowMinuteOfDay: Int? = null
 ): Int? =
     entries.withIndex()
-        .mapNotNull { (index, entry) ->
-            val date = parsePortalDate(entry.dayAndDate) ?: return@mapNotNull null
-            if (date.isBefore(today)) return@mapNotNull null
-            val interval = parseScheduleInterval(entry.time)
-            if (date == today && nowMinuteOfDay != null && interval != null &&
-                interval.endMinuteOfDay <= nowMinuteOfDay
-            ) {
-                return@mapNotNull null
-            }
-            index to (date.toEpochDay() * 1440L + (interval?.startMinuteOfDay ?: 0))
+        .filter { (_, entry) ->
+            parsePortalDate(entry.dayAndDate) != null &&
+                !examHasPassed(entry, today, nowMinuteOfDay)
         }
-        .minByOrNull { it.second }
-        ?.first
+        .minByOrNull { (_, entry) -> examSortKey(entry) }
+        ?.index
 
 /** "1,000.00" / "Rs 27900" → 1000.0 / 27900.0; 0.0 if it does not parse. */
 fun parseRupees(raw: String): Double =
