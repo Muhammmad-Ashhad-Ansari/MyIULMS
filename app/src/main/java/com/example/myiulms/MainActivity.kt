@@ -2943,7 +2943,10 @@ private fun WeeklyLiveChip() {
     Surface(
         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
         contentColor = MaterialTheme.colorScheme.primary,
-        shape = CircleShape
+        shape = CircleShape,
+        // The row's state description already says "Live"; leaving the chip's
+        // text in the merged node would make a screen reader say it twice.
+        modifier = Modifier.clearAndSetSemantics {}
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
