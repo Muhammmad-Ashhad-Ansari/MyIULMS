@@ -128,6 +128,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -2787,6 +2788,11 @@ private fun WeeklyScheduleCard(
         ?: entry.time.trim().ifBlank { "—" }
     val endText = interval?.let { formatWallClock(it.endMinuteOfDay) }
     val meta = weeklyClassMeta(entry.location, entry.faculty)
+    // Overline value; null means the block does not compose, so a row without a
+    // code keeps its exact previous layout. A code that merely repeats the title
+    // would announce the same words twice, so it is dropped.
+    val courseCode = displayCourseCode(entry.courseCode)
+        ?.takeUnless { it.equals(entry.courseTitle.trim(), ignoreCase = true) }
 
     Column(
         modifier = Modifier
@@ -2912,6 +2918,25 @@ private fun WeeklyScheduleCard(
             }
             Spacer(Modifier.width(AppSpacing.Md))
             Column(modifier = Modifier.weight(1f)) {
+                // All three states render the overline, when there is one, so
+                // the row's height cannot differ between Upcoming, Live and
+                // Past for the same entry.
+                if (courseCode != null) {
+                    Text(
+                        text = courseCode,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 0.5.sp,
+                        color = if (isPast) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.height(2.dp))
+                }
                 Text(
                     text = entry.courseTitle.ifBlank { "Class" },
                     style = MaterialTheme.typography.titleSmall,
@@ -3137,6 +3162,23 @@ internal fun weeklyClassMeta(location: String?, faculty: String?): WeeklyClassMe
         room = formatRoomLabel(location),
         faculty = faculty?.trim()?.takeIf { it.isNotBlank() }
     )
+
+/**
+ * The code shown above a class title, or null when there is nothing to show.
+ *
+ * The parser already stores a bare token, but older payloads and the
+ * label-only fallback can carry the "Course Code" label, so the label is
+ * stripped here instead of in the parsed model. UI-only by design: the field
+ * itself is never rewritten.
+ */
+internal fun displayCourseCode(raw: String?): String? {
+    val text = raw?.trim().orEmpty()
+    if (text.isEmpty()) return null
+    val stripped = text
+        .replace(Regex("^course\\s*code\\s*:?\\s*", RegexOption.IGNORE_CASE), "")
+        .trim()
+    return stripped.ifBlank { null }
+}
 
 /**
  * Spoken form of a class length for the duration pill's accessibility label.
