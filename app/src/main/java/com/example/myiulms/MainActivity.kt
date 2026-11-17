@@ -2188,6 +2188,11 @@ private fun WeeklyScheduleContent(
                                 // would need hand-matching to that height and would drift
                                 // when the font scale changed.
                                 stickyHeader(key = dayLabelKey(day)) {
+                                    // Read inside this header's own content, the
+                                    // way the entry rows do: only this header
+                                    // subscribes to the once-a-day value, and
+                                    // the item builder block stays clock-free.
+                                    val today = clock.today()
                                     // Invisible full-width shield. A pinned sticky header is
                                     // composed in a separate overlay layout drawn ON TOP of
                                     // the main item layer, so entry cards travel underneath
@@ -2218,14 +2223,28 @@ private fun WeeklyScheduleContent(
                                             shape = CircleShape
                                         ) {
                                             Text(
-                                                text = day,
+                                                text = dayHeaderLabel(day, today),
                                                 // 16.dp / 6.dp track the pill's type size.
                                                 // Neither is a spacing token; AppSpacing
                                                 // stops at 4.dp.
-                                                modifier = Modifier.padding(
-                                                    horizontal = 16.dp,
-                                                    vertical = 6.dp
-                                                ),
+                                                modifier = Modifier
+                                                    .padding(
+                                                        horizontal = 16.dp,
+                                                        vertical = 6.dp
+                                                    )
+                                                    // Header-only: the chip's own
+                                                    // semantics stay untouched.
+                                                    // Spelled out so TTS does not
+                                                    // read the middle dot.
+                                                    .then(
+                                                        if (day == today) {
+                                                            Modifier.semantics {
+                                                                contentDescription = "Today, $day"
+                                                            }
+                                                        } else {
+                                                            Modifier
+                                                        }
+                                                    ),
                                                 // titleSmall, not labelMedium: the day is the
                                                 // only orientation cue in a list of otherwise
                                                 // identical cards, so it is set at the size a
@@ -2233,7 +2252,12 @@ private fun WeeklyScheduleContent(
                                                 // caption uses.
                                                 style = MaterialTheme.typography.titleSmall,
                                                 color = MaterialTheme.colorScheme.primary,
-                                                fontWeight = FontWeight.Bold
+                                                fontWeight = FontWeight.Bold,
+                                                // The marker widens the pill; one
+                                                // line keeps the sticky header's
+                                                // height independent of the font
+                                                // scale.
+                                                maxLines = 1
                                             )
                                         }
                                     }
@@ -2319,6 +2343,13 @@ internal const val DAY_LABEL_KEY_PREFIX = "day-"
 
 /** LazyList key of [day]'s label row. */
 internal fun dayLabelKey(day: String): String = "$DAY_LABEL_KEY_PREFIX$day"
+
+/**
+ * Text of a sticky day header. Today's group carries a marker; every other
+ * group keeps its plain label. No dates, by design.
+ */
+internal fun dayHeaderLabel(day: String, today: String): String =
+    if (day == today) "Today · $day" else day
 
 /** LazyList key of a single entry card, matching the `items(...)` key lambda. */
 internal fun entryKey(day: String, entry: WeeklyScheduleEntry): String =
