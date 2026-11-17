@@ -61,7 +61,7 @@ object AcademicPolicy {
     // ---- Passing marks ----------------------------------------------------
 
     const val PASS_THRESHOLD_PERCENT = 50
-    // XF below this, per course (official policy: 75%, i.e. up to 25% absences).
+    // F below this, per course (official policy: 75%, i.e. up to 25% absences).
     // Also drives the Attendance screen's absence limits.
     const val ATTENDANCE_MIN_PERCENT = 75
     const val PASSING_GRADE_LABEL = "D Grade"
@@ -109,7 +109,7 @@ object AcademicPolicy {
             ),
             GradeBand("F", "Below $PASS_THRESHOLD_PERCENT%", "0.0", GradeTone.CRITICAL),
             GradeBand(
-                letter = "XF",
+                letter = "F",
                 range = "Attendance below $ATTENDANCE_MIN_PERCENT%",
                 points = "0.0",
                 tone = GradeTone.CRITICAL
@@ -117,7 +117,7 @@ object AcademicPolicy {
         ),
         notes = listOf(
             "D is the minimum passing grade and carries 1.0 grade point. " +
-                "XF indicates an attendance lock, not academic effort."
+                "F indicates an attendance lock, not academic effort."
         )
     )
 

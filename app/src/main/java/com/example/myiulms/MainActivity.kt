@@ -141,7 +141,9 @@ import com.example.myiulms.ui.theme.GradeStrongLight
 import com.example.myiulms.ui.theme.GradeStrongDark
 import com.example.myiulms.ui.policy.AcademicPolicy
 import com.example.myiulms.domain.attendance.SEMESTER_WEEKS
+import com.example.myiulms.domain.attendance.attendanceIsBarred
 import com.example.myiulms.domain.attendance.attendanceRiskLabel
+import com.example.myiulms.domain.attendance.attendanceUsageLabel
 import com.example.myiulms.domain.attendance.assessAttendance
 import com.example.myiulms.domain.attendance.AttendanceRisk
 import com.example.myiulms.domain.attendance.AttendanceLevel
@@ -3342,7 +3344,7 @@ private fun AttendanceCourseCard(course: AttendanceCourse, risk: AttendanceRisk)
                     modifier = Modifier.graphicsLayer { rotationZ = arrowRotation }
                 )
             }
-            AttendanceRiskChip(risk)
+            AttendanceRiskChip(risk, course.absent)
             AttendanceStatsRow(course, risk)
             // Session details grow and fade in from the stats row, and shrink
             // back on collapse, instead of popping in.
@@ -3397,39 +3399,64 @@ private fun AttendanceCourseCard(course: AttendanceCourse, risk: AttendanceRisk)
 
 /**
  * Absence status for one course: tinted pill with icon and words, so colour is
- * never the only signal. Safe = green, Caution = amber, Danger = red. Hidden
- * when the course's weekly classes can't be determined.
+ * never the only signal. Safe = green, Caution = amber, Danger = red, whether
+ * the course is at its last safe absence or already at F. Hidden when the
+ * course's weekly meetings can't be determined.
  */
 @Composable
-private fun AttendanceRiskChip(risk: AttendanceRisk) {
+private fun AttendanceRiskChip(risk: AttendanceRisk, absent: Int) {
     val label = attendanceRiskLabel(risk) ?: return
     val fg = attendanceRiskColor(risk.level) ?: return
+    val usage = attendanceUsageLabel(risk, absent) ?: return
+    val barred = attendanceIsBarred(risk)
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val (icon, levelName) = when (risk.level) {
         AttendanceLevel.Safe -> Icons.Rounded.CheckCircle to "Safe"
         AttendanceLevel.Caution -> Icons.Rounded.Warning to "Caution"
         else -> Icons.Rounded.Error to "At risk"
     }
-    val allowed = risk.allowedAbsences ?: 0
-    val used = (allowed - (risk.absencesLeft ?: 0)).coerceIn(0, allowed.coerceAtLeast(1))
-    // One-line pill: icon shape + verdict carry the level; the count stays quieter.
+    val fLimit = risk.fLimit ?: 0
+    // Spoken form: one sentence per fact, no middots and no repeated "F at" line.
+    val spoken = buildString {
+        append("Attendance $levelName. ")
+        when {
+            barred -> append("F, not eligible for exam")
+            risk.safeLeft == 0 -> append("No absences left, the next absence earns F")
+            else -> append(label)
+        }
+        append(". $absent of $fLimit absences used")
+        if (!barred && risk.safeLeft != 0) append(". F at $fLimit")
+        append(".")
+    }
+    // Two stacked lines: the headline stays legible and the count wraps under it
+    // at large font scales instead of squeezing into the same row.
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(AppRadius.Small))
             .background(fg.copy(alpha = if (dark) 0.16f else 0.10f))
             .padding(horizontal = AppSpacing.Md, vertical = AppSpacing.Sm)
-            .semantics(mergeDescendants = true) {
-                contentDescription = "Attendance $levelName. $label. $used of $allowed allowed absences used."
-            },
+            .clearAndSetSemantics { contentDescription = spoken },
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(AppSpacing.Sm))
-        Text(label, color = fg, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.weight(1f))
-        Spacer(Modifier.width(AppSpacing.Sm))
-        Text("$used of $allowed used", color = fg.copy(alpha = 0.75f), style = MaterialTheme.typography.labelMedium)
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                text = label,
+                color = fg,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = usage,
+                color = fg.copy(alpha = 0.75f),
+                style = MaterialTheme.typography.labelMedium
+            )
+        }
     }
 }
 

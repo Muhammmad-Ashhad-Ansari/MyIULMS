@@ -6,13 +6,16 @@ import com.example.myiulms.ui.dashboard.normalizeDay
 import com.example.myiulms.ui.policy.AcademicPolicy
 
 /**
- * How close a course is to the attendance lock (XF below
+ * How close a course is to the attendance F (below
  * [AcademicPolicy.ATTENDANCE_MIN_PERCENT], 75%: up to 25% of planned sessions may
  * be missed). Pure Kotlin, JVM-tested.
  *
- * Levels: Danger at 0 absences left or when the minimum can no longer be
- * reached; Caution once more than half the allowance is used or exactly one
- * absence is left; otherwise Safe.
+ * The F limit is the allowed absence count itself: 25% of planned sessions,
+ * rounded down (16 of 64, 8 of 32). The last safe absence is one less than that,
+ * because the absence that reaches the limit earns F.
+ *
+ * Levels: Safe with 3 or more safe absences left, Caution with 1-2, Danger at 0
+ * (the next absence earns F) or once the 75% minimum can no longer be reached.
  *
  * Planned sessions come from the course's own weekly timetable, verified on
  * real portal data:
@@ -36,9 +39,12 @@ data class AttendanceRisk(
     val level: AttendanceLevel,
     /** Null when the course's weekly meetings could not be determined. */
     val plannedSessions: Int? = null,
-    val allowedAbsences: Int? = null,
-    /** Allowed minus absent; negative means over the limit. */
-    val absencesLeft: Int? = null,
+    /** Absences that earn F: 25% of planned sessions, rounded down. */
+    val fLimit: Int? = null,
+    /** Last absence that still clears 75%, i.e. fLimit - 1. */
+    val maxSafe: Int? = null,
+    /** maxSafe minus absent; 0 means the next absence earns F, negative means F is reached. */
+    val safeLeft: Int? = null,
     /** Highest attendance % still reachable by attending every remaining session. */
     val bestPossiblePercent: Int? = null
 )
@@ -78,26 +84,45 @@ fun assessAttendance(
     // Make-up classes can push the real count past the plan; never plan fewer
     // sessions than have already been held.
     val planned = maxOf(meetings * semesterWeeks * sessionsPerMeeting(course.sessionHeaders), course.totalSessions)
-    val allowed = planned * (100 - minPercent) / 100
-    val left = allowed - course.absent
+    val fLimit = planned * (100 - minPercent) / 100
+    val maxSafe = (fLimit - 1).coerceAtLeast(0)
+    val safeLeft = maxSafe - course.absent
     val remaining = planned - course.totalSessions
     val best = (course.present + remaining) * 100 / planned
 
     val level = when {
-        left <= 0 || best < minPercent -> AttendanceLevel.Danger
-        left == 1 || course.absent * 2 > allowed -> AttendanceLevel.Caution
+        course.absent >= fLimit || best < minPercent -> AttendanceLevel.Danger
+        safeLeft == 0 -> AttendanceLevel.Danger
+        safeLeft in 1..2 -> AttendanceLevel.Caution
         else -> AttendanceLevel.Safe
     }
-    return AttendanceRisk(level, planned, allowed, left, best)
+    return AttendanceRisk(level, planned, fLimit, maxSafe, safeLeft, best)
 }
 
-/** One line for the course card, e.g. "2 absences left". Null when unknown. */
+/** True once the absence count earns F or 75% can no longer be reached. */
+fun attendanceIsBarred(risk: AttendanceRisk): Boolean =
+    risk.level == AttendanceLevel.Danger && (risk.safeLeft ?: 0) != 0
+
+/**
+ * Headline for the course card: "5 absences left", "1 absence left",
+ * "0 left · Next absence = F", or "F · Not eligible for exam". Null when the
+ * course's weekly meetings are unknown.
+ */
 fun attendanceRiskLabel(risk: AttendanceRisk): String? {
-    val left = risk.absencesLeft ?: return null
-    return when {
-        left < 0 -> "Over the absence limit"
-        left == 0 -> "No absences left"
-        left == 1 -> "Last absence left"
-        else -> "$left absences left"
+    val left = risk.safeLeft ?: return null
+    return when (risk.level) {
+        AttendanceLevel.Safe -> "$left absences left"
+        AttendanceLevel.Caution -> if (left == 1) "1 absence left" else "$left absences left"
+        AttendanceLevel.Danger -> if (left == 0) "0 left · Next absence = F" else "F · Not eligible for exam"
+        AttendanceLevel.Unknown -> null
     }
+}
+
+/**
+ * Supporting count, e.g. "12 / 16 (F at 16)". Once barred the raw count stays
+ * unclamped, so 16 / 16 and 17 / 16 both show instead of hiding the overage.
+ */
+fun attendanceUsageLabel(risk: AttendanceRisk, absent: Int): String? {
+    val fLimit = risk.fLimit ?: return null
+    return if (attendanceIsBarred(risk)) "$absent / $fLimit" else "$absent / $fLimit (F at $fLimit)"
 }
