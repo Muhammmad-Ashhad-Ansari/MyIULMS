@@ -92,6 +92,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
@@ -1554,7 +1555,14 @@ private fun ResultScreen(
     val totals = result.rows.mapNotNull { it.total.toDoubleOrNull() }
     val average = if (totals.isNotEmpty()) totals.average() else null
     val highest = totals.maxOrNull()
-    val aGrades = result.rows.count { it.grade.trim().uppercase().startsWith("A") }
+    val aGrades = result.rows.count { row ->
+        val grade = row.grade.trim().uppercase()
+        grade == "A" || grade == "A-"
+    }
+    val semesterLabel = result.title
+        .replace("EXAM RESULT", "", ignoreCase = true)
+        .trim(' ', '(', ')', '-')
+        .ifBlank { "Latest examination" }
 
     // Data-present branch only: `loading` here always means a refresh, never the first load.
     MyIulmsPullToRefresh(
@@ -1576,10 +1584,7 @@ private fun ResultScreen(
             item {
                 ScreenHeading(
                     title = "Results",
-                    subtitle = result.title
-                        .replace("EXAM RESULT", "", ignoreCase = true)
-                        .trim(' ', '(', ')', '-')
-                        .ifBlank { "Latest examination" },
+                    subtitle = semesterLabel,
                     action = {
                         Row {
                             PolicyInfoButton()
@@ -1609,22 +1614,14 @@ private fun ResultScreen(
             }
 
             item {
-                HeroMetricCard(
-                    label = "Semester GPA",
-                    value = result.gpa ?: "—",
-                    helper = "${result.rows.size} courses",
-                    icon = Icons.Rounded.AutoGraph
+                ResultGpaHeroCard(
+                    gpa = result.gpa ?: "—",
+                    semesterLabel = semesterLabel,
+                    courseCount = result.rows.size,
+                    average = average?.let(::formatOneDecimal) ?: "—",
+                    highest = (highest ?: average)?.let(::formatOneDecimal) ?: "—",
+                    aGrades = aGrades
                 )
-            }
-
-            if (average != null) {
-                item {
-                    MetricStrip(
-                        "Average" to formatOneDecimal(average),
-                        "Highest" to formatOneDecimal(highest ?: average),
-                        "A grades" to aGrades.toString()
-                    )
-                }
             }
 
             if (result.rows.isEmpty()) {
@@ -1642,15 +1639,127 @@ private fun ResultScreen(
     }
 }
 
+/** One hero card: GPA on top, the three derived headline numbers on one strip. */
+@Composable
+private fun ResultGpaHeroCard(
+    gpa: String,
+    semesterLabel: String,
+    courseCount: Int,
+    average: String,
+    highest: String,
+    aGrades: Int
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(AppRadius.Hero),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+    ) {
+        Column(Modifier.padding(20.dp)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "SEMESTER GPA",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .8f)
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(
+                            gpa,
+                            style = MaterialTheme.typography.displaySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "/ 4.00",
+                            modifier = Modifier.padding(bottom = 7.dp),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .62f)
+                        )
+                    }
+                }
+                Spacer(Modifier.width(AppSpacing.Md))
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        semesterLabel,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        "$courseCount courses",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .72f)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(AppSpacing.Lg))
+            HorizontalDivider(color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .18f))
+            Spacer(Modifier.height(AppSpacing.Sm))
+
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                ResultHeroStat("Average", average, Modifier.weight(1f))
+                ResultHeroDivider()
+                ResultHeroStat("Highest", highest, Modifier.weight(1f))
+                ResultHeroDivider()
+                ResultHeroStat("A grades", aGrades.toString(), Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ResultHeroStat(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier.clearAndSetSemantics { contentDescription = "$label: $value" },
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            value,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            maxLines = 1,
+            softWrap = false
+        )
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .72f),
+            textAlign = TextAlign.Center,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
+private fun ResultHeroDivider() {
+    VerticalDivider(
+        modifier = Modifier.height(26.dp),
+        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .18f)
+    )
+}
+
 @Composable
 private fun ResultCourseCard(row: ExamRow) {
+    val accent = gradeColor(row.grade)
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(AppRadius.Large),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(Modifier.padding(AppSpacing.Lg)) {
-            Row(verticalAlignment = Alignment.Top) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ResultScoreRing(total = row.total, grade = row.grade)
+                Spacer(Modifier.width(14.dp))
                 Text(
                     row.course,
                     modifier = Modifier.weight(1f),
@@ -1659,26 +1768,144 @@ private fun ResultCourseCard(row: ExamRow) {
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
-                Spacer(Modifier.width(10.dp))
-                GradeBadge(row.grade)
+                Spacer(Modifier.width(AppSpacing.Md))
+                Column(horizontalAlignment = Alignment.End) {
+                    GradeBadge(row.grade)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Grade pt",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                    Text(
+                        gradePointLabel(row.points),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = accent,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
             }
-
-            Spacer(Modifier.height(15.dp))
-
-            ResultMarksRow(row)
 
             HorizontalDivider(
                 Modifier.padding(vertical = 13.dp),
                 color = MaterialTheme.colorScheme.outline.copy(alpha = .7f)
             )
 
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+            ResultBreakdownRow(row)
+        }
+    }
+}
+
+/**
+ * Score ring: the arc only fills when the portal total is a number out of 100.
+ * A raw or missing total still renders, just without the "/100" denominator.
+ */
+@Composable
+private fun ResultScoreRing(total: String, grade: String) {
+    val parsed = total.trim().toDoubleOrNull()
+    val outOfHundred = parsed != null && parsed in 0.0..100.0
+    val fraction = if (outOfHundred) (parsed!! / 100.0).toFloat() else 0f
+    val accent = gradeColor(grade)
+    val track = MaterialTheme.colorScheme.outline.copy(alpha = .18f)
+
+    Box(
+        modifier = Modifier
+            .size(56.dp)
+            .drawBehind {
+                val stroke = 5.dp.toPx()
+                val inset = stroke / 2f
+                val arcSize = Size(size.width - stroke, size.height - stroke)
+                drawArc(
+                    color = track,
+                    startAngle = -90f,
+                    sweepAngle = 360f,
+                    useCenter = false,
+                    topLeft = Offset(inset, inset),
+                    size = arcSize,
+                    style = Stroke(width = stroke)
+                )
+                if (fraction > 0f) {
+                    drawArc(
+                        color = accent,
+                        startAngle = -90f,
+                        sweepAngle = 360f * fraction,
+                        useCenter = false,
+                        topLeft = Offset(inset, inset),
+                        size = arcSize,
+                        style = Stroke(width = stroke, cap = StrokeCap.Round)
+                    )
+                }
+            }
+            .clearAndSetSemantics {
+                contentDescription = if (outOfHundred) {
+                    "Total $total out of 100. Grade ${grade.ifBlank { "not available" }}."
+                } else {
+                    "Total ${total.ifBlank { "not available" }}. Grade ${grade.ifBlank { "not available" }}."
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                total.ifBlank { "—" },
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                softWrap = false
+            )
+            if (outOfHundred) {
+                Text(
+                    "/100",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+        }
+    }
+}
+
+/** Mid · Quiz · Project · Final, four equal columns that never wrap. */
+@Composable
+private fun ResultBreakdownRow(row: ExamRow) {
+    val marks = listOf("Mid" to row.midterm, "Quiz" to row.quizzes, "Project" to row.project, "Final" to row.finalExam)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clearAndSetSemantics {
+                contentDescription = marks.joinToString(", ") { (label, value) ->
+                    "$label ${value.ifBlank { "not available" }}"
+                }
+            }
+    ) {
+        marks.forEach { (label, value) ->
+            Column(
+                modifier = Modifier.weight(1f),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                SummaryValue("Total", row.total)
-                SummaryValue("Grade", row.grade)
-                SummaryValue("Points", row.points)
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    softWrap = false
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    value.ifBlank { "—" },
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }
@@ -4650,39 +4877,6 @@ private fun ScreenHeading(
     }
 }
 
-/** Mid · Quiz · Project · Final in one row; wraps at large font sizes. */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun ResultMarksRow(row: ExamRow) {
-    val marks = listOf("Mid" to row.midterm, "Quiz" to row.quizzes, "Project" to row.project, "Final" to row.finalExam)
-        .map { (label, value) -> label to value.ifBlank { "—" } }
-    FlowRow(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clearAndSetSemantics {
-                contentDescription = marks.joinToString(", ") { (label, value) -> "$label $value" }
-            },
-        horizontalArrangement = Arrangement.spacedBy(AppSpacing.Sm),
-        verticalArrangement = Arrangement.spacedBy(AppSpacing.Sm),
-        maxItemsInEachRow = 4
-    ) {
-        val cell = Modifier.weight(1f).widthIn(min = 64.dp)
-        marks.forEach { (label, value) -> CompactStat(value, label, cell) }
-    }
-}
-
-@Composable
-private fun SummaryValue(label: String, value: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value.ifBlank { "—" }, style = MaterialTheme.typography.titleMedium)
-        Text(
-            label,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
 @Composable
 private fun InfoLine(icon: ImageVector, label: String, value: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -4956,6 +5150,11 @@ private fun ErrorBanner(
 private fun formatOneDecimal(value: Double): String =
     if (value % 1.0 == 0.0) value.toInt().toString()
     else String.format(Locale.US, "%.1f", value)
+
+private fun gradePointLabel(points: String): String {
+    val value = points.trim().toDoubleOrNull() ?: return points.ifBlank { "—" }
+    return String.format(Locale.US, "%.2f", value)
+}
 
 private enum class DueKind { OVERDUE, SOON, NORMAL }
 private data class DueInfo(val label: String, val kind: DueKind)
