@@ -1584,7 +1584,7 @@ private fun ResultScreen(
             item {
                 ScreenHeading(
                     title = "Results",
-                    subtitle = semesterLabel,
+                    subtitle = "Semester marks & GPA",
                     action = {
                         Row {
                             PolicyInfoButton()
@@ -1615,7 +1615,7 @@ private fun ResultScreen(
 
             item {
                 ResultGpaHeroCard(
-                    gpa = result.gpa ?: "—",
+                    gpa = formatTwoDecimals(result.gpa?.takeIf { it.isNotBlank() } ?: "—"),
                     semesterLabel = semesterLabel,
                     courseCount = result.rows.size,
                     average = average?.let(::formatOneDecimal) ?: "—",
@@ -5150,6 +5150,9 @@ private fun ErrorBanner(
 private fun formatOneDecimal(value: Double): String =
     if (value % 1.0 == 0.0) value.toInt().toString()
     else String.format(Locale.US, "%.1f", value)
+
+private fun formatTwoDecimals(raw: String): String =
+    raw.trim().toDoubleOrNull()?.let { String.format(Locale.US, "%.2f", it) } ?: raw
 
 private fun gradePointLabel(points: String): String {
     val value = points.trim().toDoubleOrNull() ?: return points.ifBlank { "—" }
