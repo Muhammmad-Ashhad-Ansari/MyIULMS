@@ -93,37 +93,47 @@ class AttendanceRiskTest {
     // ---- four tiers on a 16-absence limit ----
 
     @Test
-    fun `theory tiers from safe through the last safe line`() {
-        val threeLeft = assessAttendance(theory(absent = 12))
-        assertEquals(AttendanceLevel.Safe, threeLeft.level)
-        assertEquals("3 absences left", attendanceRiskLabel(threeLeft))
+    fun `theory is safe down to 5 absences left and amber for 4 down to 2`() {
+        val fiveLeft = assessAttendance(theory(absent = 10))
+        assertEquals(AttendanceLevel.Safe, fiveLeft.level)
+        assertEquals("5 absences left", attendanceRiskLabel(fiveLeft))
+        assertEquals("10 / 16", attendanceUsageLabel(fiveLeft, 10))
+
+        val fourLeft = assessAttendance(theory(absent = 11))
+        assertEquals(AttendanceLevel.Caution, fourLeft.level)
+        assertEquals("4 absences left", attendanceRiskLabel(fourLeft))
 
         val twoLeft = assessAttendance(theory(absent = 13))
         assertEquals(AttendanceLevel.Caution, twoLeft.level)
         assertEquals("2 absences left", attendanceRiskLabel(twoLeft))
+    }
 
+    @Test
+    fun `theory is red from 1 absence left through the limit`() {
         val oneLeft = assessAttendance(theory(absent = 14))
-        assertEquals(AttendanceLevel.Caution, oneLeft.level)
+        assertEquals(AttendanceLevel.Danger, oneLeft.level)
         assertEquals("1 absence left", attendanceRiskLabel(oneLeft))
+        assertFalse(attendanceIsBarred(oneLeft))
+        assertEquals("14 / 16", attendanceUsageLabel(oneLeft, 14))
 
         val lastSafe = assessAttendance(theory(absent = 15))
         assertEquals(AttendanceLevel.Danger, lastSafe.level)
-        assertEquals("0 left · Next absence = F", attendanceRiskLabel(lastSafe))
+        assertEquals("0 left · Next = F", attendanceRiskLabel(lastSafe))
         assertFalse(attendanceIsBarred(lastSafe))
-        assertEquals("15 / 16 (F at 16)", attendanceUsageLabel(lastSafe, 15))
+        assertEquals("15 / 16", attendanceUsageLabel(lastSafe, 15))
     }
 
     @Test
     fun `theory is barred at and beyond 16 absences`() {
         val atLimit = assessAttendance(theory(absent = 16))
         assertEquals(AttendanceLevel.Danger, atLimit.level)
-        assertEquals("F · Not eligible for exam", attendanceRiskLabel(atLimit))
+        assertEquals("F · Not eligible", attendanceRiskLabel(atLimit))
         assertTrue(attendanceIsBarred(atLimit))
         assertEquals("16 / 16", attendanceUsageLabel(atLimit, 16))
 
         val over = assessAttendance(theory(absent = 17))
         assertEquals(AttendanceLevel.Danger, over.level)
-        assertEquals("F · Not eligible for exam", attendanceRiskLabel(over))
+        assertEquals("F · Not eligible", attendanceRiskLabel(over))
         assertTrue(attendanceIsBarred(over))
         assertEquals("17 / 16", attendanceUsageLabel(over, 17))
     }
@@ -131,36 +141,46 @@ class AttendanceRiskTest {
     // ---- four tiers on an 8-absence limit ----
 
     @Test
-    fun `lab tiers from safe through the last safe line`() {
-        val threeLeft = assessAttendance(lab(absent = 4))
-        assertEquals(AttendanceLevel.Safe, threeLeft.level)
-        assertEquals("3 absences left", attendanceRiskLabel(threeLeft))
-        assertEquals("4 / 8 (F at 8)", attendanceUsageLabel(threeLeft, 4))
+    fun `lab is safe down to 5 absences left and amber for 4 down to 2`() {
+        val fiveLeft = assessAttendance(lab(absent = 2))
+        assertEquals(AttendanceLevel.Safe, fiveLeft.level)
+        assertEquals("5 absences left", attendanceRiskLabel(fiveLeft))
+        assertEquals("2 / 8", attendanceUsageLabel(fiveLeft, 2))
+
+        val fourLeft = assessAttendance(lab(absent = 3))
+        assertEquals(AttendanceLevel.Caution, fourLeft.level)
+        assertEquals("4 absences left", attendanceRiskLabel(fourLeft))
 
         val twoLeft = assessAttendance(lab(absent = 5))
         assertEquals(AttendanceLevel.Caution, twoLeft.level)
         assertEquals("2 absences left", attendanceRiskLabel(twoLeft))
+    }
 
+    @Test
+    fun `lab is red from 1 absence left through the limit`() {
         val oneLeft = assessAttendance(lab(absent = 6))
-        assertEquals(AttendanceLevel.Caution, oneLeft.level)
+        assertEquals(AttendanceLevel.Danger, oneLeft.level)
         assertEquals("1 absence left", attendanceRiskLabel(oneLeft))
+        assertFalse(attendanceIsBarred(oneLeft))
+        assertEquals("6 / 8", attendanceUsageLabel(oneLeft, 6))
 
         val lastSafe = assessAttendance(lab(absent = 7))
         assertEquals(AttendanceLevel.Danger, lastSafe.level)
-        assertEquals("0 left · Next absence = F", attendanceRiskLabel(lastSafe))
+        assertEquals("0 left · Next = F", attendanceRiskLabel(lastSafe))
         assertFalse(attendanceIsBarred(lastSafe))
+        assertEquals("7 / 8", attendanceUsageLabel(lastSafe, 7))
     }
 
     @Test
     fun `lab is barred at and beyond 8 absences`() {
         val atLimit = assessAttendance(lab(absent = 8))
         assertEquals(AttendanceLevel.Danger, atLimit.level)
-        assertEquals("F · Not eligible for exam", attendanceRiskLabel(atLimit))
+        assertEquals("F · Not eligible", attendanceRiskLabel(atLimit))
         assertTrue(attendanceIsBarred(atLimit))
         assertEquals("8 / 8", attendanceUsageLabel(atLimit, 8))
 
         val over = assessAttendance(lab(absent = 9))
-        assertEquals("F · Not eligible for exam", attendanceRiskLabel(over))
+        assertEquals("F · Not eligible", attendanceRiskLabel(over))
         assertTrue(attendanceIsBarred(over))
         assertEquals("9 / 8", attendanceUsageLabel(over, 9))
     }

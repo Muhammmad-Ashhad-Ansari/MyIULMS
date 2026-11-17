@@ -3399,9 +3399,8 @@ private fun AttendanceCourseCard(course: AttendanceCourse, risk: AttendanceRisk)
 
 /**
  * Absence status for one course: tinted pill with icon and words, so colour is
- * never the only signal. Safe = green, Caution = amber, Danger = red, whether
- * the course is at its last safe absence or already at F. Hidden when the
- * course's weekly meetings can't be determined.
+ * never the only signal. Safe = green, Caution = amber, Danger = red. Hidden
+ * when the course's weekly meetings can't be determined.
  */
 @Composable
 private fun AttendanceRiskChip(risk: AttendanceRisk, absent: Int) {
@@ -3416,7 +3415,7 @@ private fun AttendanceRiskChip(risk: AttendanceRisk, absent: Int) {
         else -> Icons.Rounded.Error to "At risk"
     }
     val fLimit = risk.fLimit ?: 0
-    // Spoken form: one sentence per fact, no middots and no repeated "F at" line.
+    // Spoken form: one sentence per fact, no middots and no repeated count line.
     val spoken = buildString {
         append("Attendance $levelName. ")
         when {
@@ -3428,8 +3427,7 @@ private fun AttendanceRiskChip(risk: AttendanceRisk, absent: Int) {
         if (!barred && risk.safeLeft != 0) append(". F at $fLimit")
         append(".")
     }
-    // Two stacked lines: the headline stays legible and the count wraps under it
-    // at large font scales instead of squeezing into the same row.
+    // Slim single line: verdict on the left, compact count on the right.
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -3437,26 +3435,33 @@ private fun AttendanceRiskChip(risk: AttendanceRisk, absent: Int) {
             .background(fg.copy(alpha = if (dark) 0.16f else 0.10f))
             .padding(horizontal = AppSpacing.Md, vertical = AppSpacing.Sm)
             .clearAndSetSemantics { contentDescription = spoken },
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(AppSpacing.Sm))
-        Column(
+        Row(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(AppSpacing.Sm))
             Text(
                 text = label,
                 color = fg,
                 style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold
-            )
-            Text(
-                text = usage,
-                color = fg.copy(alpha = 0.75f),
-                style = MaterialTheme.typography.labelMedium
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
             )
         }
+        Spacer(Modifier.width(AppSpacing.Sm))
+        Text(
+            text = usage,
+            color = fg.copy(alpha = 0.75f),
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            softWrap = false
+        )
     }
 }
 
