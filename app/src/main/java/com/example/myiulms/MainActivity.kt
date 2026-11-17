@@ -1962,12 +1962,22 @@ private fun WeeklyScheduleContent(
 
     val weekDays = listOf("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
     val classDays = groups.keys
-    var selectedDay by rememberSaveable(schedule) { mutableStateOf<String?>(null) }
+    // No schedule key: a refresh swaps the object, and keying on it cleared a
+    // selection the student had just made. The day set is reconciled below.
+    var selectedDay by rememberSaveable { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
     /** Suppresses the scroll-driven highlight while a chip tap is animating. */
     var suppressHighlight by remember { mutableStateOf(false) }
+
+    // A refresh can drop the selected day. Clear the selection in that case
+    // instead of leaving a chip lit with no group behind it. Only writes on an
+    // actual change, and never scrolls.
+    LaunchedEffect(classDays) {
+        val reconciled = reconcileSelectedDay(selectedDay, classDays, fallback = null)
+        if (reconciled != selectedDay) selectedDay = reconciled
+    }
 
     // Composition-scoped Activity context for the share intent. Never hoisted
     // into the ViewModel: that would outlive the Activity and leak it.
@@ -2466,6 +2476,21 @@ internal fun dominantDay(
         .maxByOrNull { it.value }
         ?.key
 }
+
+/**
+ * Keeps a chip selection only while its day still exists.
+ *
+ * A refresh can return a schedule that no longer contains the selected day.
+ * Leaving the value in place would light a chip with no group behind it, so
+ * the selection falls back instead. A missing selection stays at the fallback
+ * rather than being invented here; the fallback argument is what a later
+ * default-today step will use.
+ */
+internal fun reconcileSelectedDay(
+    stored: String?,
+    classDays: Set<String>,
+    fallback: String?
+): String? = stored?.takeIf { it in classDays } ?: fallback
 
 /**
  * Day-of-week chips for the weekly schedule.
