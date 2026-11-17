@@ -9,9 +9,9 @@
 </p>
 
 <p align="center">
-  <img alt="Release v1.3.1" src="https://img.shields.io/badge/Release-v1.3.1-3fb950?style=for-the-badge">
+  <img alt="Release v1.4.0" src="https://img.shields.io/badge/Release-v1.4.0-3fb950?style=for-the-badge">
   <img alt="Target SDK 37" src="https://img.shields.io/badge/Target%20SDK-Android%2037-3DDC84?style=for-the-badge&logo=android&logoColor=white">
-  <img alt="223 unit tests passing" src="https://img.shields.io/badge/Unit%20Tests-223%20passing-3fb950?style=for-the-badge">
+  <img alt="285 unit tests passing" src="https://img.shields.io/badge/Unit%20Tests-285%20passing-3fb950?style=for-the-badge">
   <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/blob/main/LICENSE">
     <img alt="MIT License" src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge">
   </a>
@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/tag/v1.3.1"><strong>⬇ Download v1.3.1 APK</strong></a>
+  <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/releases/tag/v1.4.0"><strong>⬇ Download v1.4.0 APK</strong></a>
   ·
   <a href="https://github.com/Muhammmad-Ashhad-Ansari/MyIULMS/issues">Report an issue</a>
 </p>
