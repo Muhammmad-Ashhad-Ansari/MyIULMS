@@ -174,13 +174,11 @@ class MainViewModel(
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
+            } catch (error: Exception) {
                 // Automatic checks fail silently so the user is never interrupted.
-                // Manual checks keep the existing visible error.
+                // Manual checks surface the real cause (rate limit, timeout, ...).
                 if (reportFailure) {
-                    UpdateCheckState.Failed(
-                        "Couldn't check for updates. Check your internet connection and try again."
-                    )
+                    UpdateCheckState.Failed(error.toUpdateCheckErrorMessage())
                 } else {
                     null
                 }
@@ -847,6 +845,25 @@ private fun Throwable.toSignInErrorMessage(): String {
         is ConnectException,
         is IOException -> "Couldn't reach IULMS. Check your internet connection and try again."
         else -> "Couldn't sign in right now. Please try again."
+    }
+}
+
+// UpdateChecker ke crafted IOException messages (403, 404, HTTP code, parse)
+// yahan se guzarte hain; sirf pure network failures ko friendly text milta hai.
+private fun Throwable.toUpdateCheckErrorMessage(): String {
+    val network = generateSequence(this) { it.cause }.firstOrNull {
+        it is SocketTimeoutException ||
+            it is UnknownHostException ||
+            it is ConnectException
+    }
+
+    return when (network) {
+        is SocketTimeoutException -> "GitHub took too long to respond. Please try again."
+        is UnknownHostException,
+        is ConnectException -> "Couldn't reach GitHub. Check your internet connection and try again."
+        else -> localizedMessage?.takeIf { it.isNotBlank() }
+            ?: message?.takeIf { it.isNotBlank() }
+            ?: "Unknown error"
     }
 }
 

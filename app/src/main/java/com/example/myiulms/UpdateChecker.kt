@@ -2,6 +2,7 @@ package com.example.myiulms
 
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -43,13 +44,23 @@ private object GitHubReleaseClient {
             .build()
 
         client.newCall(request).execute().use { response ->
+            when (response.code) {
+                // GitHub's unauthenticated REST quota is 60 requests/hour per IP;
+                // shared campus/ISP NATs exhaust it quickly.
+                403 -> throw IOException("GitHub rate limit reached (60/hr). Try again later.")
+                404 -> throw IOException("No releases found for this repository.")
+            }
             if (!response.isSuccessful) {
                 throw IOException("GitHub returned HTTP ${response.code}")
             }
 
             val body = response.body?.string()
                 ?: throw IOException("GitHub returned an empty response")
-            val release = JSONObject(body)
+            val release = try {
+                JSONObject(body)
+            } catch (parse: JSONException) {
+                throw IOException("GitHub returned an unreadable response.", parse)
+            }
             val version = release.optString("tag_name").trim()
             val releaseUrl = release.optString("html_url").trim()
             val notes = release.optString("body").trim()
